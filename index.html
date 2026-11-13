@@ -279,6 +279,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
 .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{flex:1;background:var(--surface-2);border:0;padding:8px 4px;font-size:12.5px;color:var(--ink-soft)}
 .seg button.on{background:var(--navy);color:#fff;font-weight:600}
+.seg button small{display:block;font-size:10px;font-weight:400;opacity:.8;margin-top:1px}
 </style>
 </head>
 <body>
@@ -337,7 +338,11 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     </div>
     <div class="row">
       <div class="field"><label for="f_sta0">STA awal (m)</label><input id="f_sta0" type="number" value="0" step="1"></div>
-      <div class="field" id="wrapInterval"><label for="f_staint">Jarak antar titik (m)</label><input id="f_staint" type="number" value="200" step="1"></div>
+      <div class="field"><label for="f_staint">Jarak antar titik DCP (m)</label><input id="f_staint" type="number" value="50" step="1" min="1"></div>
+    </div>
+    <p class="note" style="margin-top:0">Jarak ini dipakai setiap kali menambah titik baru: STA titik berikutnya otomatis bertambah sebesar nilai ini.</p>
+    <div class="btnrow" style="margin-top:8px">
+      <button class="btn quiet" id="btnTitikOtomatis" type="button" style="display:none">Buat titik sepanjang trase</button>
     </div>
   </div>
 
@@ -388,6 +393,11 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
   <div id="ujiIsi" style="display:none">
     <div class="card">
       <button class="chipbtn" id="ujiChip" type="button"></button>
+      <div class="seg" id="segUji" style="margin-top:8px">
+        <button type="button" data-uji="0" class="on">Percobaan 1</button>
+        <button type="button" data-uji="1">Percobaan 2</button>
+      </div>
+      <p class="note" style="margin:6px 0 0">Pedoman: tiap titik diuji dua kali, berjarak 20 cm.</p>
       <details class="lipat" id="setUji">
         <summary id="setRingkas">Konus dan pembacaan awal</summary>
         <div class="field" style="margin-top:10px"><label>Sudut konus</label>
@@ -453,7 +463,14 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     </div>
     <div class="card">
       <h2>CBR wakil titik ini</h2>
-      <div class="field"><label for="l_wakil">Cara menetapkan</label>
+      <div id="cbrBanding" style="margin-bottom:10px"></div>
+      <div class="field"><label for="l_gabung">Gabungan dua percobaan</label>
+        <select id="l_gabung">
+          <option value="rata">Rata-rata kedua percobaan</option>
+          <option value="min">Ambil yang terkecil</option>
+        </select>
+      </div>
+      <div class="field"><label for="l_wakil">Cara menetapkan tiap percobaan</label>
         <select id="l_wakil">
           <option value="min">Lapisan terlemah (CBR minimum)</option>
           <option value="avg">Rata-rata tertimbang tebal lapisan</option>
@@ -579,6 +596,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
   <h3 style="margin:0 0 10px;font-size:15px">Menu</h3>
   <div class="btnrow" style="flex-direction:column;gap:8px">
     <button class="btn quiet" id="mKop" type="button">Kop dan nama instansi</button>
+    <button class="btn quiet" id="mPeta" type="button">Peta lokasi titik</button>
     <button class="btn quiet" id="mLaporan" type="button">Laporan cetak / PDF</button>
     <button class="btn quiet" id="mWord" type="button">Laporan Word (.docx)</button>
     <button class="btn quiet" id="mExport" type="button">File Excel analisis</button>
@@ -648,7 +666,7 @@ function baseState() {
     v: 1,
     proyek: {
       nama: "", ruas: "", tim: "", tanggal: todayISO(),
-      lapisan: "Subgrade", konus: 60, sta0: 0, staInt: 200
+      lapisan: "Subgrade", konus: 60, sta0: 0, staInt: 50
     },
     trase: null,          // {nama, ll:[[lon,lat]..], xy:[[e,n]..], cum:[..], total}
     gambar: { fitur: [], overlay: [] },   // seluruh isi KMZ untuk latar peta
@@ -676,20 +694,49 @@ function newTitik() {
     lat: null, lon: null, offset: null,
     sta: staTebakan(),
     konus: S.titik.length ? num(S.titik[S.titik.length - 1].konus, 60) : num(S.proyek.konus, 60),
-    awal: 0,
-    bacaan: [],            // [{t:jumlah tumbukan, mm:pembacaan mistar}]
-    batas: null,           // indeks titik data pembatas lapisan (1..n-1)
-    auto: true,
+    /* pedoman mensyaratkan pengujian duplo: dua percobaan berjarak 20 cm */
+    uji: [ujiBaru(), ujiBaru()],
+    aktif: 0,
+    gabung: "rata",        // cara menggabungkan hasil dua percobaan
     wakil: "min",
     foto: [],
     catatan: ""
   };
 }
 
+function ujiBaru() {
+  return {
+    awal: 0,
+    bacaan: [],          // [{t:jumlah tumbukan, mm:pembacaan mistar}]
+    batas: null,         // indeks titik data pembatas lapisan (1..n-1)
+    auto: true
+  };
+}
+/** Pastikan satu titik punya dua percobaan; data lama ikut dipindahkan. */
+function pastikanUji(t) {
+  if (!t.uji) {
+    t.uji = [{
+      awal: num(t.awal), bacaan: t.bacaan || [],
+      batas: t.batas || null, auto: t.auto !== false
+    }, ujiBaru()];
+    delete t.awal; delete t.bacaan; delete t.batas; delete t.auto;
+  }
+  while (t.uji.length < 2) t.uji.push(ujiBaru());
+  if (t.aktif === undefined || t.aktif < 0 || t.aktif > 1) t.aktif = 0;
+  if (!t.gabung) t.gabung = "rata";
+  return t;
+}
+function ujiAktif(t) { pastikanUji(t); return t.uji[t.aktif]; }
+function adaData(u) { return titikData(u).length >= 2; }
+function titikBerisi(t) {
+  pastikanUji(t);
+  return t.uji.some(function (u) { return adaData(u); });
+}
+
 function staTebakan() {
   if (!S.titik.length) return S.proyek.sta0 || 0;
   var last = S.titik[S.titik.length - 1];
-  return (last.sta || 0) + (S.proyek.staInt || 200);
+  return num(last.sta, 0) + num(S.proyek.staInt, 50);
 }
 
 /* ------------------- identitas instansi (kop laporan) ------------------ */
@@ -728,7 +775,11 @@ function muat() {
     var raw = localStorage.getItem(STORE_KEY);
     if (!raw) return false;
     var o = JSON.parse(raw);
-    if (o && o.proyek && Array.isArray(o.titik)) { S = Object.assign(baseState(), o); return true; }
+    if (o && o.proyek && Array.isArray(o.titik)) {
+      S = Object.assign(baseState(), o);
+      S.titik.forEach(pastikanUji);
+      return true;
+    }
   } catch (e) { /* abaikan */ }
   return false;
 }
@@ -756,15 +807,16 @@ function esc(s) {
    Perhitungan DCP
    ====================================================================== */
 
-/** Deret titik kumulatif: indeks 0 = pembacaan awal (0 tumbukan, 0 mm). */
-function titikData(t) {
+/** Deret titik kumulatif satu percobaan: indeks 0 = pembacaan awal. */
+function titikData(u) {
   var pts = [{ blow: 0, pen: 0 }];
+  if (!u || !u.bacaan) return pts;
   var b = 0;
-  for (var i = 0; i < t.bacaan.length; i++) {
-    var r = t.bacaan[i];
+  for (var i = 0; i < u.bacaan.length; i++) {
+    var r = u.bacaan[i];
     if (r.mm === null || r.mm === undefined || r.mm === "") continue;
     b += num(r.t, 1);
-    pts.push({ blow: b, pen: num(r.mm) - num(t.awal) });
+    pts.push({ blow: b, pen: num(r.mm) - num(u.awal) });
   }
   return pts;
 }
@@ -778,11 +830,11 @@ function cbrDariDcp(dcp, konus) {
   return isFinite(c) ? c : null;
 }
 
-/** Hitung lapisan dari batas yang berlaku. */
-function hitungLapisan(t) {
-  var pts = titikData(t);
+/** Hitung lapisan satu percobaan dari batas yang berlaku. */
+function hitungLapisan(u, konus) {
+  var pts = titikData(u);
   if (pts.length < 2) return { pts: pts, lapis: [], batas: [] };
-  var bt = (t.batas && t.batas.length ? t.batas.slice() : autoBatas(pts))
+  var bt = (u.batas && u.batas.length ? u.batas.slice() : autoBatas(pts))
     .filter(function (i) { return i > 0 && i < pts.length - 1; })
     .sort(function (a, b) { return a - b; })
     .filter(function (v, i, a) { return i === 0 || v !== a[i - 1]; });
@@ -797,7 +849,7 @@ function hitungLapisan(t) {
       blow0: a.blow, blow1: b.blow,
       pen0: a.pen, pen1: b.pen,
       tebal: dPen, dcp: dcp,
-      cbr: cbrDariDcp(dcp, t.konus),
+      cbr: cbrDariDcp(dcp, konus),
       warna: LAYER_COLORS[k % LAYER_COLORS.length]
     });
   }
@@ -886,18 +938,29 @@ function autoBatas(pts) {
   return bt;
 }
 
-/** CBR wakil satu titik. */
-function cbrWakil(t) {
-  var h = hitungLapisan(t);
+/** CBR wakil satu percobaan. */
+function cbrWakilUji(u, konus, cara) {
+  var h = hitungLapisan(u, konus);
   var L = h.lapis.filter(function (l) { return l.cbr !== null; });
   if (!L.length) return null;
-  if (t.wakil === "last") return L[L.length - 1].cbr;
-  if (t.wakil === "avg") {
+  if (cara === "last") return L[L.length - 1].cbr;
+  if (cara === "avg") {
     var st = 0, sv = 0;
     L.forEach(function (l) { var w = Math.max(l.tebal, 1); st += w; sv += w * l.cbr; });
     return st > 0 ? sv / st : null;
   }
   return L.reduce(function (a, l) { return l.cbr < a ? l.cbr : a; }, Infinity);
+}
+/** CBR wakil satu titik: hasil dua percobaan digabung. */
+function cbrWakil(t) {
+  pastikanUji(t);
+  var nilai = t.uji.map(function (u) {
+    return adaData(u) ? cbrWakilUji(u, t.konus, t.wakil) : null;
+  }).filter(function (x) { return x !== null; });
+  if (!nilai.length) return null;
+  if (nilai.length === 1) return nilai[0];
+  if (t.gabung === "min") return Math.min.apply(null, nilai);
+  return nilai.reduce(function (a, b) { return a + b; }, 0) / nilai.length;
 }
 
 /** Pembulatan CBR lapangan ke 0,5 % seperti kebiasaan pada tabel rekap. */
@@ -911,7 +974,11 @@ function dataRekap() {
   S.titik.forEach(function (t) {
     var c = cbrWakil(t);
     if (c === null) return;
-    d.push({ id: t.id, kode: t.kode, sta: num(t.sta), cbr: cbrBulat(c), asli: c, nlap: hitungLapisan(t).lapis.length });
+    d.push({
+      id: t.id, kode: t.kode, sta: num(t.sta), cbr: cbrBulat(c), asli: c,
+      nlap: hitungLapisan(t.uji[0], t.konus).lapis.length,
+      nuji: t.uji.filter(function (u) { return adaData(u); }).length
+    });
   });
   d.sort(function (a, b) { return a.sta - b.sta; });
   return d;
@@ -1321,7 +1388,8 @@ function nice(v) {
 /** Grafik kumulatif tumbukan vs kumulatif penetrasi (penetrasi ke bawah). */
 function gambarUji(t) {
   var el = document.getElementById("ujiChart");
-  var h = hitungLapisan(t), pts = h.pts;
+  var u = ujiAktif(t);
+  var h = hitungLapisan(u, t.konus), pts = h.pts;
   var W = 320, H = 230, ml = 42, mr = 10, mt = 12, mb = 30;
   if (pts.length < 2) { el.innerHTML = teksKosong(W, H, "Belum ada pembacaan."); return; }
   var maxB = nice(pts[pts.length - 1].blow), maxP = nice(Math.max.apply(null, pts.map(function (p) { return p.pen; })) || 10);
@@ -1514,8 +1582,8 @@ function lukisPeta(el, W, H, v, opt) {
     return [(m[0] - v.cx) * v.s + W / 2, (v.cy - m[1]) * v.s + H / 2];
   };
   var g = ['<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#2B3A45"/>'];
-  if (opt.dasar) {
-    lapisanUbin(v, W, H).forEach(function (u) {
+  if (opt.ubin || opt.dasar) {
+    (opt.ubin || lapisanUbin(v, W, H)).forEach(function (u) {
       g.push('<image href="' + u.url + '" x="' + u.x.toFixed(2) + '" y="' + u.y.toFixed(2) +
         '" width="' + u.sisi.toFixed(2) + '" height="' + u.sisi.toFixed(2) +
         '" preserveAspectRatio="none"/>');
@@ -1601,6 +1669,31 @@ function lukisPeta(el, W, H, v, opt) {
     }
     g.push('<circle cx="' + q2[0].toFixed(1) + '" cy="' + q2[1].toFixed(1) +
       '" r="6" fill="' + or + '" stroke="#fff" stroke-width="2"/>');
+  }
+  if (opt.skala) {
+    var tengah = mercBalik(v.cx, v.cy);
+    var mPerPx = Math.cos(tengah[1] * Math.PI / 180) / v.s;
+    var kasar = mPerPx * (W * 0.26);
+    var e10 = Math.pow(10, Math.floor(Math.log(kasar) / Math.LN10));
+    var bulat = (kasar / e10 >= 5 ? 5 : kasar / e10 >= 2 ? 2 : 1) * e10;
+    var lebarBar = bulat / mPerPx;
+    var bx = 14, by = H - 18;
+    g.push('<rect x="' + (bx - 5) + '" y="' + (by - 16) + '" width="' + (lebarBar + 10) +
+      '" height="26" fill="#ffffff" fill-opacity=".82" stroke="#00000055" stroke-width=".6"/>');
+    g.push('<line x1="' + bx + '" y1="' + by + '" x2="' + (bx + lebarBar) + '" y2="' + by +
+      '" stroke="#000" stroke-width="2"/>');
+    g.push('<line x1="' + bx + '" y1="' + (by - 4) + '" x2="' + bx + '" y2="' + (by + 4) + '" stroke="#000" stroke-width="2"/>');
+    g.push('<line x1="' + (bx + lebarBar) + '" y1="' + (by - 4) + '" x2="' + (bx + lebarBar) + '" y2="' + (by + 4) +
+      '" stroke="#000" stroke-width="2"/>');
+    g.push('<text x="' + (bx + lebarBar / 2) + '" y="' + (by - 5) + '" font-size="9" text-anchor="middle" fill="#000"' +
+      ' style="font-family:Arial,Helvetica,sans-serif">' +
+      (bulat >= 1000 ? (bulat / 1000) + " km" : bulat + " m") + "</text>");
+    var ux = W - 26, uy = 30;
+    g.push('<circle cx="' + ux + '" cy="' + (uy - 4) + '" r="15" fill="#ffffff" fill-opacity=".82" stroke="#00000055" stroke-width=".6"/>');
+    g.push('<path d="M' + ux + " " + (uy - 16) + "L" + (ux - 5) + " " + (uy + 3) + "L" + ux + " " + (uy - 2) +
+      "L" + (ux + 5) + " " + (uy + 3) + 'Z" fill="#000"/>');
+    g.push('<text x="' + ux + '" y="' + (uy + 13) + '" font-size="8.5" text-anchor="middle" fill="#000"' +
+      ' style="font-family:Arial,Helvetica,sans-serif">U</text>');
   }
   el.setAttribute("viewBox", "0 0 " + W + " " + H);
   el.innerHTML = g.join("");
@@ -1885,8 +1978,8 @@ function namaLembar(s, dipakai) {
 }
 function ref(nama, a) { return "'" + nama.replace(/'/g, "''") + "'!" + a; }
 
-function lembarDCP(t, nama) {
-  var h = hitungLapisan(t), pts = h.pts;
+function lembarDCP(t, u, no, nama) {
+  var h = hitungLapisan(u, t.konus), pts = h.pts;
   var P = S.proyek;
   var L = new Lembar(nama);
   L.lebar(1, 2, 7.5).lebar(3, 5, 6).lebar(6, 7, 7.5).lebar(8, 9, 8.5)
@@ -1898,7 +1991,7 @@ function lembarDCP(t, nama) {
   L.t("G3", "Tim Investigasi", ST.tebal); L.gabung("G3:I3");
   L.t("J3", ":"); L.t("K3", P.tim || "-");
   L.t("A4", "Lokasi / Titik", ST.tebal); L.gabung("A4:B4");
-  L.t("C4", ": " + (P.ruas || "-") + " / " + t.kode); L.gabung("C4:F4");
+  L.t("C4", ": " + (P.ruas || "-") + " / " + t.kode + " (percobaan " + no + ")"); L.gabung("C4:F4");
   L.t("G4", "Tanggal", ST.tebal); L.gabung("G4:I4");
   L.t("J4", ":"); L.t("K4", t.tanggal || P.tanggal || "-");
   L.t("A5", "STA", ST.tebal); L.gabung("A5:B5");
@@ -1929,11 +2022,11 @@ function lembarDCP(t, nama) {
     if (i === 0) {
       L.t("A" + r, "awal", ST.teksTengah);
       L.n("C" + r, 0, ST.bulat);
-      L.n("F" + r, num(t.awal), ST.bulat);
+      L.n("F" + r, num(u.awal), ST.bulat);
     } else {
-      L.n("A" + r, num(t.bacaan[i - 1].t, 1), ST.bulat);
+      L.n("A" + r, num(u.bacaan[i - 1].t, 1), ST.bulat);
       L.f("C" + r, "C" + (r - 1) + "+A" + r, ST.bulat);
-      L.n("F" + r, num(t.bacaan[i - 1].mm), ST.bulat);
+      L.n("F" + r, num(u.bacaan[i - 1].mm), ST.bulat);
     }
     L.f("H" + r, "F" + r + "-$F$" + r0, ST.bulat);
     L.gabung("A" + r + ":B" + r); L.gabung("C" + r + ":E" + r);
@@ -1975,7 +2068,7 @@ function lembarDCP(t, nama) {
   L.grafik.push({
     c0: 0, r0: rc + 2, c1: 9, r1: rc + 22,
     xml: grafikXml({
-      judul: "Grafik DCP — " + t.kode + "  (STA " + staTeks(t.sta) + ")",
+      judul: "Grafik DCP \u2014 " + t.kode + " percobaan " + no + "  (STA " + staTeks(t.sta) + ")",
       xJudul: "Kumulatif tumbukan", yJudul: "Kumulatif penetrasi (mm)",
       yBalik: true, seri: seri
     })
@@ -2079,12 +2172,15 @@ function buatWorkbook() {
   var data = dataRekap();
   if (!data.length) throw new Error("Belum ada titik dengan hasil CBR.");
   var dipakai = [], lembar = [];
-  var punyaData = S.titik.filter(function (t) { return titikData(t).length >= 2; });
-  punyaData.forEach(function (t) {
-    var nm = namaLembar("DCP " + t.kode, dipakai);
-    var L = lembarDCP(t, nm);
-    if (!S.grafikTitik) L.grafik = [];
-    lembar.push(L);
+  S.titik.forEach(function (t) {
+    pastikanUji(t);
+    t.uji.forEach(function (u, i) {
+      if (!adaData(u)) return;
+      var nm = namaLembar("DCP " + t.kode + " P" + (i + 1), dipakai);
+      var L = lembarDCP(t, u, i + 1, nm);
+      if (!S.grafikTitik) L.grafik = [];
+      lembar.push(L);
+    });
   });
   lembar.push(lembarRekap(data, namaLembar("CBR Rekap", dipakai)));
 
@@ -2263,7 +2359,7 @@ function isiTrase() {
   var el = $("traseInfo"), peta = $("traseMap");
   var gb = S.gambar || { fitur: [], overlay: [] };
   var jGaris = gb.fitur.filter(function (f) { return f.jenis === "garis"; }).length;
-  $("wrapInterval").style.display = S.trase ? "none" : "";
+  $("btnTitikOtomatis").style.display = S.trase ? "" : "none";
   $("btnGantiGaris").style.display = jGaris > 1 ? "" : "none";
   if (!S.trase && !gb.fitur.length) {
     el.style.display = ""; peta.style.display = "none";
@@ -2295,9 +2391,13 @@ function isiTitik() {
     L.innerHTML = '<div class="empty">Belum ada titik uji. Tambahkan titik pertama.</div>';
   } else {
     L.innerHTML = S.titik.map(function (t) {
-      var c = cbrWakil(t), n = titikData(t).length - 1;
+      pastikanUji(t);
+      var c = cbrWakil(t);
+      var n = t.uji.reduce(function (a, u) { return a + (titikData(u).length - 1); }, 0);
+      var nu = t.uji.filter(function (u) { return adaData(u); }).length;
       return '<div class="pitem' + (t.id === sel ? " sel" : "") + '" data-id="' + t.id + '">' +
-        '<div class="k">' + esc(t.kode) + '<div class="m">STA ' + staTeks(t.sta) + " · " + n + " pembacaan</div></div>" +
+        '<div class="k">' + esc(t.kode) + '<div class="m">STA ' + staTeks(t.sta) + " · " + n +
+        " pembacaan · " + nu + " dari 2 percobaan</div></div>" +
         '<div class="v"><b>' + (c === null ? "—" : fmt(c, 2)) + "</b><span>CBR %</span></div>" +
         '<button class="more" type="button" data-more="' + t.id + '">\u22EF</button></div>';
     }).join("");
@@ -2363,23 +2463,31 @@ function isiUji() {
   $("ujiKosong").style.display = t ? "none" : "";
   $("ujiIsi").style.display = t ? "" : "none";
   if (!t) return;
-  var n = titikData(t).length - 1;
+  pastikanUji(t);
+  var u = ujiAktif(t);
+  var n = t.uji.reduce(function (a, x) { return a + (titikData(x).length - 1); }, 0);
   $("ujiChip").innerHTML = esc(t.kode) + " · STA " + staTeks(t.sta) +
     "<span>" + n + " pembacaan · ubah</span>";
-  $("u_awal").value = t.awal;
+  Array.prototype.forEach.call(document.querySelectorAll("#segUji button"), function (b) {
+    var i = +b.dataset.uji;
+    b.classList.toggle("on", i === t.aktif);
+    var jml = titikData(t.uji[i]).length - 1;
+    b.innerHTML = "Percobaan " + (i + 1) + "<small>" + (jml ? jml + " pembacaan" : "kosong") + "</small>";
+  });
+  $("u_awal").value = u.awal;
   $("u_konus").value = String(t.konus);
-  $("setRingkas").textContent = "Konus " + num(t.konus, 60) + "° · pembacaan awal " + num(t.awal) + " mm";
+  $("setRingkas").textContent = "Konus " + num(t.konus, 60) + "\u00B0 \u00B7 pembacaan awal " + num(u.awal) + " mm";
   isiKonus("konusUji", "u_konus", t.konus, function () {
     $("u_konus").dispatchEvent(new Event("change"));
   });
   var tb = document.querySelector("#ujiTabel tbody"), kum = 0, baris = [];
-  for (var i = 0; i < t.bacaan.length; i++) {
-    kum += num(t.bacaan[i].t, 1);
-    var pen = t.bacaan[i].mm === "" ? "" : (num(t.bacaan[i].mm) - num(t.awal));
-    baris.push('<tr><td class="inp"><input type="number" inputmode="numeric" data-i="' + i + '" data-k="t" value="' + esc(t.bacaan[i].t) + '"></td>' +
+  for (var i = 0; i < u.bacaan.length; i++) {
+    kum += num(u.bacaan[i].t, 1);
+    var pen = u.bacaan[i].mm === "" ? "" : (num(u.bacaan[i].mm) - num(u.awal));
+    baris.push('<tr><td class="inp"><input type="number" inputmode="numeric" data-i="' + i + '" data-k="t" value="' + esc(u.bacaan[i].t) + '"></td>' +
       '<td class="num">' + kum + "</td>" +
-      '<td class="inp"><input type="number" inputmode="numeric" data-i="' + i + '" data-k="mm" value="' + esc(t.bacaan[i].mm) + '"></td>' +
-      '<td class="num">' + (pen === "" ? "—" : pen) + "</td>" +
+      '<td class="inp"><input type="number" inputmode="numeric" data-i="' + i + '" data-k="mm" value="' + esc(u.bacaan[i].mm) + '"></td>' +
+      '<td class="num">' + (pen === "" ? "\u2014" : pen) + "</td>" +
       '<td><button class="btn quiet sm" data-hapus="' + i + '" style="padding:4px 7px">\u00D7</button></td></tr>');
   }
   tb.innerHTML = baris.join("") ||
@@ -2387,17 +2495,18 @@ function isiUji() {
   Array.prototype.forEach.call(tb.querySelectorAll("input"), function (el) {
     el.addEventListener("change", function () {
       var tt = titikAktif(); if (!tt) return;
-      var i = +el.dataset.i;
-      if (el.dataset.k === "t") tt.bacaan[i].t = el.value === "" ? 1 : num(el.value, 1);
-      else tt.bacaan[i].mm = el.value === "" ? "" : num(el.value);
-      if (tt.auto) tt.batas = null;
+      var uu = ujiAktif(tt), i = +el.dataset.i;
+      if (el.dataset.k === "t") uu.bacaan[i].t = el.value === "" ? 1 : num(el.value, 1);
+      else uu.bacaan[i].mm = el.value === "" ? "" : num(el.value);
+      if (uu.auto) uu.batas = null;
       simpan(); isiUji();
     });
   });
   Array.prototype.forEach.call(tb.querySelectorAll("[data-hapus]"), function (el) {
     el.addEventListener("click", function () {
-      var tt = titikAktif(); tt.bacaan.splice(+el.dataset.hapus, 1);
-      if (tt.auto) tt.batas = null;
+      var tt = titikAktif(), uu = ujiAktif(tt);
+      uu.bacaan.splice(+el.dataset.hapus, 1);
+      if (uu.auto) uu.batas = null;
       simpan(); isiUji();
     });
   });
@@ -2406,7 +2515,8 @@ function isiUji() {
   gambarUji(t);
 }
 function periksaUji(t) {
-  var pesan = [], kabar = [], pts = titikData(t), n = pts.length;
+  pastikanUji(t);
+  var pesan = [], kabar = [], pts = titikData(ujiAktif(t)), n = pts.length;
   for (var i = 1; i < n; i++) {
     if (pts[i].pen < pts[i - 1].pen) { pesan.push("Pembacaan ke-" + i + " lebih kecil dari sebelumnya. Penetrasi harus bertambah."); break; }
   }
@@ -2424,6 +2534,17 @@ function periksaUji(t) {
     if (akhir.pen > 900) pesan.push("Kumulatif penetrasi sudah melewati 90 cm, di luar jangkauan alat.");
   }
   if (n >= 2 && n < 6) kabar.push("Data masih sedikit. Deteksi lapisan otomatis bekerja mulai sekitar 5 pembacaan.");
+  if (adaData(t.uji[0]) && !adaData(t.uji[1])) {
+    kabar.push("Pedoman mensyaratkan pengujian duplo: percobaan kedua berjarak 20 cm dari titik pertama.");
+  }
+  var ab = t.uji.map(function (x) { return adaData(x) ? cbrWakilUji(x, t.konus, t.wakil) : null; });
+  if (ab[0] !== null && ab[1] !== null) {
+    var besar = Math.max(ab[0], ab[1]), kecil = Math.min(ab[0], ab[1]);
+    if (kecil > 0 && besar / kecil > 2) {
+      pesan.push("CBR kedua percobaan jauh berbeda (" + fmt(ab[0], 2) + " % dan " + fmt(ab[1], 2) +
+        " %). Periksa kembali pembacaan atau ulangi pengujian.");
+    }
+  }
   $("ujiPeringatan").innerHTML =
     (pesan.length ? '<div class="warnbox">' + pesan.map(esc).join("<br>") + "</div>" : "") +
     (kabar.length ? '<div class="okbox">' + kabar.map(esc).join("<br>") + "</div>" : "");
@@ -2505,12 +2626,15 @@ function pasangLogo(file) {
 
 /* ------------------------------ lapisan -------------------------------- */
 function isiLapisan() {
-  var t = titikAktif(), ada = t && titikData(t).length >= 2;
+  var t = titikAktif();
+  if (t) pastikanUji(t);
+  var u = t ? ujiAktif(t) : null;
+  var ada = t && adaData(u);
   $("lapKosong").style.display = ada ? "none" : "";
   $("lapIsi").style.display = ada ? "" : "none";
   if (!ada) return;
-  var h = hitungLapisan(t), pts = h.pts;
-  $("lapMode").textContent = t.auto ? "— otomatis" : "— disetel manual";
+  var h = hitungLapisan(u, t.konus), pts = h.pts;
+  $("lapMode").textContent = "\u2014 percobaan " + (t.aktif + 1) + (u.auto ? ", otomatis" : ", disetel manual");
   var total = pts[pts.length - 1].pen || 1;
   $("strataCol").innerHTML = h.lapis.map(function (l, i) {
     var tinggi = Math.max(8, Math.round(100 * l.tebal / total));
@@ -2520,7 +2644,7 @@ function isiLapisan() {
     return '<div class="sline"><i style="background:' + l.warna + '"></i>' +
       "<span>Lapisan " + (i + 1) + "</span>" +
       "<b>" + fmt(l.cbr, 2) + " %</b>" +
-      '<span class="sp">' + fmt(l.tebal, 0) + " mm · DCP " + fmt(l.dcp, 1) + "</span></div>";
+      '<span class="sp">' + fmt(l.tebal, 0) + " mm \u00B7 DCP " + fmt(l.dcp, 1) + "</span></div>";
   }).join("");
   var bt = h.batas;
   $("batasEditor").innerHTML = bt.length ? bt.map(function (b, i) {
@@ -2528,28 +2652,35 @@ function isiLapisan() {
       "<span>Batas " + (i + 1) + "</span>" +
       '<b class="num">pembacaan ke-' + b + "</b>" +
       '<span class="sp">' + fmt(pts[b].pen, 0) + " mm</span>" +
-      '<button class="btn quiet sm" data-geser="-1" data-i="' + i + '">◀</button>' +
-      '<button class="btn quiet sm" data-geser="1" data-i="' + i + '">▶</button>' +
-      '<button class="btn quiet sm" data-buang="' + i + '">×</button></div>';
+      '<button class="btn quiet sm" data-geser="-1" data-i="' + i + '">\u25C0</button>' +
+      '<button class="btn quiet sm" data-geser="1" data-i="' + i + '">\u25B6</button>' +
+      '<button class="btn quiet sm" data-buang="' + i + '">\u00D7</button></div>';
   }).join("") : '<div class="empty">Satu lapisan saja, belum ada batas.</div>';
   Array.prototype.forEach.call($("batasEditor").querySelectorAll("[data-geser]"), function (el) {
     el.addEventListener("click", function () {
-      var tt = titikAktif(), hh = hitungLapisan(tt), b = hh.batas.slice();
+      var tt = titikAktif(), uu = ujiAktif(tt);
+      var hh = hitungLapisan(uu, tt.konus), b = hh.batas.slice();
       var i = +el.dataset.i, v = b[i] + (+el.dataset.geser);
       if (v <= 0 || v >= hh.pts.length - 1) return;
       if (b.indexOf(v) >= 0) return;
-      b[i] = v; tt.batas = b; tt.auto = false;
+      b[i] = v; uu.batas = b; uu.auto = false;
       simpan(); isiLapisan(); gambarUji(tt);
     });
   });
   Array.prototype.forEach.call($("batasEditor").querySelectorAll("[data-buang]"), function (el) {
     el.addEventListener("click", function () {
-      var tt = titikAktif(), hh = hitungLapisan(tt), b = hh.batas.slice();
-      b.splice(+el.dataset.buang, 1); tt.batas = b; tt.auto = false;
+      var tt = titikAktif(), uu = ujiAktif(tt);
+      var hh = hitungLapisan(uu, tt.konus), b = hh.batas.slice();
+      b.splice(+el.dataset.buang, 1); uu.batas = b; uu.auto = false;
       simpan(); isiLapisan(); gambarUji(tt);
     });
   });
   $("l_wakil").value = t.wakil;
+  $("l_gabung").value = t.gabung;
+  var ab = t.uji.map(function (x) { return adaData(x) ? cbrWakilUji(x, t.konus, t.wakil) : null; });
+  $("cbrBanding").innerHTML =
+    '<div class="kv"><span>Percobaan 1</span><b>' + (ab[0] === null ? "\u2014" : fmt(ab[0], 2) + " %") + "</b></div>" +
+    '<div class="kv"><span>Percobaan 2</span><b>' + (ab[1] === null ? "\u2014" : fmt(ab[1], 2) + " %") + "</b></div>";
   $("cbrWakil").textContent = fmt(cbrWakil(t), 2);
 }
 
@@ -2719,11 +2850,12 @@ function kopHtml() {
     (INST.alamat ? '<div class="i3">' + esc(INST.alamat) + "</div>" : "") +
     "</div></div>";
 }
-function infoHtml(t) {
+function infoHtml(t, no) {
   var P = S.proyek;
   return '<div class="info"><table><tr><td>Proyek</td><td>: ' + esc(P.nama || "-") + "</td></tr>" +
     "<tr><td>Lokasi</td><td>: " + esc(P.ruas || "-") + "</td></tr>" +
-    "<tr><td>Km/Sta</td><td>: " + staTeks(t.sta) + " &nbsp;(" + esc(t.kode) + ")</td></tr>" +
+    "<tr><td>Km/Sta</td><td>: " + staTeks(t.sta) + " &nbsp;(" + esc(t.kode) +
+      (no ? ", percobaan " + no : "") + ")</td></tr>" +
     "<tr><td>Ukuran konus</td><td>: " + num(t.konus, 60) + "&deg;</td></tr></table>" +
     "<table><tr><td>Dikerjakan</td><td>: " + esc(INST.teknisi || P.tim || "-") + "</td></tr>" +
     "<tr><td>Dihitung</td><td>: " + esc(INST.hitung || "-") + "</td></tr>" +
@@ -2748,15 +2880,15 @@ function ttdHtml(t) {
 }
 
 /** Lembar formulir pengujian — susunan kolom mengikuti Lampiran B. */
-function lembarFormulir(t) {
-  var h = hitungLapisan(t), pts = h.pts;
+function lembarFormulir(t, u, no) {
+  var h = hitungLapisan(u, t.konus), pts = h.pts;
   var segDari = {};
   h.lapis.forEach(function (l) { segDari[l.i0 + 1] = l; });
   var baris = [], kum = 0;
   for (var i = 0; i < pts.length; i++) {
-    var tumb = i === 0 ? 0 : num(t.bacaan[i - 1].t, 1);
+    var tumb = i === 0 ? 0 : num(u.bacaan[i - 1].t, 1);
     kum = pts[i].blow;
-    var baca = i === 0 ? num(t.awal) : num(t.bacaan[i - 1].mm);
+    var baca = i === 0 ? num(u.awal) : num(u.bacaan[i - 1].mm);
     var sel = "";
     if (segDari[i]) {
       var l = segDari[i], rs = l.i1 - l.i0;
@@ -2769,7 +2901,7 @@ function lembarFormulir(t) {
       fmt(pts[i].pen, 0) + "</td>" + sel + "</tr>");
   }
   return '<div class="lembar">' + kopHtml() +
-    "<h1>PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)</h1>" + infoHtml(t) +
+    "<h1>PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)</h1>" + infoHtml(t, no) +
     '<table class="data"><thead><tr>' +
     "<th>Banyak<br>Tumbukan</th><th>Kumulatif<br>Tumbukan</th><th>Penetrasi<br>(mm)</th>" +
     "<th>Kumulatif<br>Penetrasi<br>(mm)</th><th>DCP<br>(mm/tumbukan)</th><th>CBR<br>(%)</th>" +
@@ -2779,8 +2911,8 @@ function lembarFormulir(t) {
 }
 
 /** Lembar grafik hubungan kumulatif tumbukan dan kumulatif penetrasi (Lampiran C). */
-function grafikLampiranC(t) {
-  var h = hitungLapisan(t), pts = h.pts;
+function grafikLampiranC(t, u) {
+  var h = hitungLapisan(u, t.konus), pts = h.pts;
   var W = 560, H = 400, ml = 56, mr = 16, mt = 40, mb = 24;
   var maxB = Math.max(20, Math.ceil(pts[pts.length - 1].blow / 10) * 10);
   var maxP = Math.max(1000, Math.ceil(pts[pts.length - 1].pen / 100) * 100);
@@ -2819,16 +2951,68 @@ function grafikLampiranC(t) {
   });
   return '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto">' + g.join("") + "</svg>";
 }
-function lembarGrafik(t) {
-  var h = hitungLapisan(t);
+function lembarGrafik(t, u, no) {
+  var h = hitungLapisan(u, t.konus);
   var ket = h.lapis.map(function (l, i) {
     return "Lapisan " + (i + 1) + ": tumbukan " + l.blow0 + "\u2013" + l.blow1 +
       ", tebal " + fmt(l.tebal, 0) + " mm, DCP " + fmt(l.dcp, 2) + " mm/tumbukan, CBR " + fmt(l.cbr, 2) + " %";
   }).join("<br>");
   return '<div class="lembar">' + kopHtml() +
-    "<h1>PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)</h1>" + infoHtml(t) +
-    grafikLampiranC(t) +
+    "<h1>PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)</h1>" + infoHtml(t, no) +
+    grafikLampiranC(t, u) +
     '<p class="ket">' + ket + "</p>" + ttdHtml(t) + "</div>";
+}
+
+/**
+ * Peta lokasi titik DCP untuk lampiran. Ubin citra diambil dari simpanan HP
+ * dan ditanam sebagai data URI supaya gambar tetap utuh saat dicetak maupun
+ * saat diubah menjadi gambar untuk berkas Word.
+ */
+async function petaLaporanSvg(W, H) {
+  var v = pandanganPenuh(W, H, 34);
+  if (!v) return null;
+  var ubin = [];
+  if (S.petaDasar !== false) {
+    var daftar = ubinLayar(v, W, H);
+    for (var i = 0; i < daftar.length; i++) {
+      var u = daftar[i];
+      var buf = await ubinDariSimpanan(u.z + "/" + u.y + "/" + u.x);
+      if (buf) ubin.push({ uri: bytesKeUri(new Uint8Array(buf), "image/jpeg"), x: u.x_, y: u.y_, sisi: u.sisi });
+    }
+  }
+  var tmp = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  lukisPeta(tmp, W, H, v, { ubin: ubin.length ? ubin : null, label: true, skala: true });
+  return '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto">' + tmp.innerHTML + "</svg>";
+}
+function bytesKeUri(b, jenis) {
+  var biner = "";
+  for (var i = 0; i < b.length; i += 8192) biner += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
+  return "data:" + jenis + ";base64," + btoa(biner);
+}
+
+/** Lembar lampiran peta lokasi seluruh titik pengujian. */
+function lembarPetaLokasi(svg) {
+  var data = dataRekap();
+  var baris = data.map(function (d, i) {
+    var t = S.titik.filter(function (x) { return x.id === d.id; })[0] || {};
+    return "<tr><td>" + (i + 1) + "</td><td>" + esc(d.kode) + "</td><td>" + staTeks(d.sta) + "</td>" +
+      "<td>" + (t.lat === null || t.lat === undefined ? "\u2014" : fmt(t.lat, 6)) + "</td>" +
+      "<td>" + (t.lon === null || t.lon === undefined ? "\u2014" : fmt(t.lon, 6)) + "</td>" +
+      "<td>" + (t.offset ? fmt(t.offset, 1) + " m " + (t.sisi === 1 ? "kanan" : "kiri") : "as jalan") + "</td>" +
+      "<td>" + fmt(d.cbr, 2) + "</td></tr>";
+  }).join("");
+  return '<div class="lembar">' + kopHtml() +
+    "<h1>LAMPIRAN PETA LOKASI TITIK PENGUJIAN DCP</h1>" +
+    '<div class="info"><table>' +
+    "<tr><td>Proyek</td><td>: " + esc(S.proyek.nama || "-") + "</td></tr>" +
+    "<tr><td>Ruas</td><td>: " + esc(S.proyek.ruas || "-") + "</td></tr></table>" +
+    "<table><tr><td>Jumlah titik</td><td>: " + data.length + "</td></tr>" +
+    "<tr><td>Tanggal</td><td>: " + esc(tglPanjang(S.proyek.tanggal)) + "</td></tr></table></div>" +
+    (svg || '<p class="ket">Peta tidak dapat dibuat: belum ada trase atau gambar KMZ.</p>') +
+    (data.length ? '<table class="data" style="margin-top:10px"><thead><tr>' +
+      "<th>No</th><th>Kode</th><th>STA</th><th>Lintang</th><th>Bujur</th><th>Posisi melintang</th><th>CBR (%)</th>" +
+      "</tr></thead><tbody>" + baris + "</tbody></table>" : "") +
+    ttdHtml({ tanggal: S.proyek.tanggal }) + "</div>";
 }
 
 /** Lembar lampiran dokumentasi foto satu titik. */
@@ -2878,15 +3062,22 @@ function lembarRekapCetak() {
     ttdHtml({ tanggal: S.proyek.tanggal }) + "</div>";
 }
 
-function bukaLaporan() {
-  var punya = S.titik.filter(function (t) { return titikData(t).length >= 2; });
+async function bukaLaporan() {
+  var punya = S.titik.filter(function (t) { pastikanUji(t); return titikBerisi(t); });
   if (!punya.length) { toast("Belum ada titik yang berisi pembacaan."); return; }
+  toast("Menyusun laporan\u2026");
   var html = [];
   punya.forEach(function (t) {
-    html.push(lembarFormulir(t));
-    html.push(lembarGrafik(t));
+    t.uji.forEach(function (u, i) {
+      if (!adaData(u)) return;
+      html.push(lembarFormulir(t, u, i + 1));
+      html.push(lembarGrafik(t, u, i + 1));
+    });
     html.push(lembarDokumentasi(t));
   });
+  var svg = null;
+  try { svg = await petaLaporanSvg(620, 440); } catch (e) { svg = null; }
+  html.push(lembarPetaLokasi(svg));
   html.push(lembarRekapCetak());
   $("lapIsiCetak").innerHTML = html.join("");
   $("laporan").classList.add("on");
@@ -3023,7 +3214,7 @@ function dKop(logo) {
 function dJudul(teks) {
   return dP(teks, { align: "center", b: true, sz: 24, sesudah: 160 });
 }
-function dInfo(t) {
+function dInfo(t, no) {
   var P = S.proyek, k = [1500, 3319, 1500, 3319];
   function b(a1, a2, a3, a4) {
     return [{ t: a1 }, { t: ": " + a2 }, { t: a3 }, { t: ": " + a4 }];
@@ -3031,7 +3222,8 @@ function dInfo(t) {
   return dTabel(k, [
     b("Proyek", P.nama || "-", "Dikerjakan", INST.teknisi || P.tim || "-"),
     b("Lokasi", P.ruas || "-", "Dihitung", INST.hitung || "-"),
-    b("Km/Sta", staTeks(t.sta) + "  (" + t.kode + ")", "Tanggal", tglPanjang(t.tanggal || P.tanggal)),
+    b("Km/Sta", staTeks(t.sta) + "  (" + t.kode + (no ? ", percobaan " + no : "") + ")",
+      "Tanggal", tglPanjang(t.tanggal || P.tanggal)),
     b("Ukuran konus", num(t.konus, 60) + "\u00B0", "Jenis lapisan", P.lapisan || "-")
   ], { tanpaGaris: true }) + dP("", { sesudah: 120 });
 }
@@ -3045,8 +3237,8 @@ function dTtd(t) {
      { t: "( " + (INST.teknisi || "....................") + " )", align: "center" }]
   ], { tanpaGaris: true });
 }
-function dFormulir(t, logo) {
-  var h = hitungLapisan(t), pts = h.pts, kepala = "1F4E79";
+function dFormulir(t, u, no, logo) {
+  var h = hitungLapisan(u, t.konus), pts = h.pts;
   var segDari = {};
   h.lapis.forEach(function (l) { segDari[l.i0 + 1] = l; });
   var kol = [1500, 1700, 1500, 1800, 1700, 1438];
@@ -3060,8 +3252,8 @@ function dFormulir(t, logo) {
   ]];
   var aktif = null;
   for (var i = 0; i < pts.length; i++) {
-    var tumb = i === 0 ? 0 : num(t.bacaan[i - 1].t, 1);
-    var baca = i === 0 ? num(t.awal) : num(t.bacaan[i - 1].mm);
+    var tumb = i === 0 ? 0 : num(u.bacaan[i - 1].t, 1);
+    var baca = i === 0 ? num(u.awal) : num(u.bacaan[i - 1].mm);
     var sel1, sel2;
     if (segDari[i]) {
       aktif = segDari[i];
@@ -3080,18 +3272,18 @@ function dFormulir(t, logo) {
       sel1, sel2
     ]);
   }
-  return dKop(logo) + dJudul("PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)") + dInfo(t) +
+  return dKop(logo) + dJudul("PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)") + dInfo(t, no) +
     dTabel(kol, baris) +
     (t.catatan ? dP("Catatan: " + t.catatan, { i: true, sz: 17, sebelum: 80 }) : "") +
     dTtd(t);
 }
-function dGrafik(t, logo, png) {
-  var h = hitungLapisan(t);
+function dGrafik(t, u, no, logo, png) {
+  var h = hitungLapisan(u, t.konus);
   var ket = h.lapis.map(function (l, i) {
     return "Lapisan " + (i + 1) + ": tumbukan " + l.blow0 + "\u2013" + l.blow1 + ", tebal " +
       fmt(l.tebal, 0) + " mm, DCP " + fmt(l.dcp, 2) + " mm/tumbukan, CBR " + fmt(l.cbr, 2) + " %";
   });
-  return dKop(logo) + dJudul("HUBUNGAN KUMULATIF TUMBUKAN DAN KUMULATIF PENETRASI") + dInfo(t) +
+  return dKop(logo) + dJudul("HUBUNGAN KUMULATIF TUMBUKAN DAN KUMULATIF PENETRASI") + dInfo(t, no) +
     dGambar(png, 620, png.no) +
     ket.map(function (x) { return dP(x, { sz: 17 }); }).join("") + dTtd(t);
 }
@@ -3120,6 +3312,40 @@ function dDokumentasi(t, logo, foto) {
       : "") +
     dTabel([LEBAR / 2, LEBAR / 2], isi, { tanpaGaris: !foto.length }) + dTtd(t);
 }
+function dPetaLokasi(logo, png) {
+  var data = dataRekap();
+  var kol = [600, 1200, 1300, 1700, 1700, 1700, 1438];
+  var baris = [[
+    { t: "No", b: true, align: "center", fill: "DCE6F1" },
+    { t: "Kode", b: true, align: "center", fill: "DCE6F1" },
+    { t: "STA", b: true, align: "center", fill: "DCE6F1" },
+    { t: "Lintang", b: true, align: "center", fill: "DCE6F1" },
+    { t: "Bujur", b: true, align: "center", fill: "DCE6F1" },
+    { t: "Posisi melintang", b: true, align: "center", fill: "DCE6F1" },
+    { t: "CBR (%)", b: true, align: "center", fill: "DCE6F1" }
+  ]];
+  data.forEach(function (d, i) {
+    var t = S.titik.filter(function (x) { return x.id === d.id; })[0] || {};
+    baris.push([
+      { t: String(i + 1), align: "center" },
+      { t: d.kode, align: "center" },
+      { t: staTeks(d.sta), align: "center" },
+      { t: (t.lat === null || t.lat === undefined) ? "\u2014" : fmt(t.lat, 6), align: "center" },
+      { t: (t.lon === null || t.lon === undefined) ? "\u2014" : fmt(t.lon, 6), align: "center" },
+      { t: t.offset ? fmt(t.offset, 1) + " m " + (t.sisi === 1 ? "kanan" : "kiri") : "as jalan", align: "center" },
+      { t: fmt(d.cbr, 2), align: "center" }
+    ]);
+  });
+  return dKop(logo) + dJudul("LAMPIRAN PETA LOKASI TITIK PENGUJIAN DCP") +
+    dTabel([1500, 3319, 1500, 3319], [
+      [{ t: "Proyek" }, { t: ": " + (S.proyek.nama || "-") }, { t: "Jumlah titik" }, { t: ": " + data.length }],
+      [{ t: "Ruas" }, { t: ": " + (S.proyek.ruas || "-") }, { t: "Tanggal" }, { t: ": " + tglPanjang(S.proyek.tanggal) }]
+    ], { tanpaGaris: true }) + dP("", { sesudah: 120 }) +
+    (png ? dGambar(png, 620, png.no)
+      : dP("Peta tidak dapat dibuat: belum ada trase, atau peta dasar belum diunduh untuk dipakai luring.", { i: true, sz: 17 })) +
+    (data.length ? dTabel(kol, baris) : "") + dTtd({ tanggal: S.proyek.tanggal });
+}
+
 function dRekap(logo) {
   var data = dataRekap();
   if (!data.length) return "";
@@ -3153,7 +3379,7 @@ function dRekap(logo) {
 
 /* --- penyusun berkas --- */
 async function buatDocx() {
-  var punya = S.titik.filter(function (t) { return titikData(t).length >= 2; });
+  var punya = S.titik.filter(function (t) { pastikanUji(t); return titikBerisi(t); });
   if (!punya.length) throw new Error("Belum ada titik yang berisi pembacaan.");
   var media = [], relGambar = [], noGambar = 0;
   function tanam(uri, w, h) {
@@ -3173,18 +3399,33 @@ async function buatDocx() {
   var bagian = [];
   for (var i = 0; i < punya.length; i++) {
     var t = punya[i];
-    var png = await batasWaktu(svgKePng(grafikLampiranC(t), 1240), 15000);
-    var gr = tanam(png.uri, png.w, png.h);
-    gr.no = 500 + i * 10;
+    for (var j = 0; j < t.uji.length; j++) {
+      var u = t.uji[j];
+      if (!adaData(u)) continue;
+      var png = await batasWaktu(svgKePng(grafikLampiranC(t, u), 1240), 15000);
+      var gr = tanam(png.uri, png.w, png.h);
+      gr.no = 500 + i * 20 + j * 2;
+      bagian.push(dFormulir(t, u, j + 1, logo));
+      bagian.push(dGrafik(t, u, j + 1, logo, gr));
+    }
     var foto = (t.foto || []).map(function (f, k) {
       var g = tanam(f.d, f.w || 900, f.h || 600);
       g.ket = f.ket; g.no = 900 + i * 10 + k;
       return g;
     });
-    bagian.push(dFormulir(t, logo));
-    bagian.push(dGrafik(t, logo, gr));
     bagian.push(dDokumentasi(t, logo, foto));
   }
+  /* lampiran peta lokasi */
+  var gPeta = null;
+  try {
+    var svgPeta = await petaLaporanSvg(620, 440);
+    if (svgPeta) {
+      var pngPeta = await batasWaktu(svgKePng(svgPeta, 1240), 20000);
+      gPeta = tanam(pngPeta.uri, pngPeta.w, pngPeta.h);
+      gPeta.no = 1500;
+    }
+  } catch (e) { gPeta = null; }
+  bagian.push(dPetaLokasi(logo, gPeta));
   var rk = dRekap(logo);
   if (rk) bagian.push(rk);
 
@@ -3766,6 +4007,7 @@ function pasang() {
     }
     tutupPeta(); bukaDetailTitik();
   });
+  ikat("btnTitikOtomatis", "click", buatTitikOtomatis);
   ikat("btnBukaPeta", "click", function () { bukaPeta("lihat"); });
   ikat("petaTutup", "click", tutupPeta);
   ikat("petaFitBtn", "click", petaSemua);
@@ -3811,24 +4053,32 @@ function pasang() {
   tampilSimpananPeta();
 
   /* uji */
+  Array.prototype.forEach.call(document.querySelectorAll("#segUji button"), function (b) {
+    b.addEventListener("click", function () {
+      var t = titikAktif(); if (!t) return;
+      pastikanUji(t); t.aktif = +b.dataset.uji;
+      simpan(); isiUji(); isiLapisan();
+    });
+  });
   ikat("u_awal", "change", function () {
     var t = titikAktif(); if (!t) return;
-    t.awal = num($("u_awal").value); if (t.auto) t.batas = null;
+    var u = ujiAktif(t);
+    u.awal = num($("u_awal").value); if (u.auto) u.batas = null;
     simpan(); isiUji();
   });
   ikat("u_konus", "change", function () {
     var t = titikAktif(); if (!t) return;
-    t.konus = num($("u_konus").value, 60); simpan(); isiUji();
+    t.konus = num($("u_konus").value, 60); simpan(); isiUji(); isiLapisan();
   });
   function catat() {
     var t = titikAktif(); if (!t) return;
     var v = $("e_mm").value;
     if (v === "") { toast("Isi bacaan mistar dulu."); $("e_mm").focus(); return; }
-    var pts = titikData(t);
-    var mm = num(v), awal = num(t.awal);
+    var u = ujiAktif(t);
+    var mm = num(v), awal = num(u.awal);
     if (mm < awal) { toast("Bacaan lebih kecil dari pembacaan awal."); }
-    t.bacaan.push({ t: num($("e_tumb").value, 1), mm: mm });
-    if (t.auto) t.batas = null;
+    u.bacaan.push({ t: num($("e_tumb").value, 1), mm: mm });
+    if (u.auto) u.batas = null;
     $("e_mm").value = "";
     simpan(); isiUji(); $("e_mm").focus();
   }
@@ -3847,11 +4097,12 @@ function pasang() {
     var i = ev.target && ev.target.dataset ? ev.target.dataset.i : null;
     if (i === null || i === undefined) return;
     var t = titikAktif(); if (!t) return;
-    var h = hitungLapisan(t), b = h.batas.slice(), k = +i;
+    var u = ujiAktif(t);
+    var h = hitungLapisan(u, t.konus), b = h.batas.slice(), k = +i;
     if (k <= 0 || k >= h.pts.length - 1) { toast("Batas tidak bisa di ujung data."); return; }
     var p = b.indexOf(k);
     if (p >= 0) b.splice(p, 1); else b.push(k);
-    t.batas = b.sort(function (x, y) { return x - y; }); t.auto = false;
+    u.batas = b.sort(function (x, y) { return x - y; }); u.auto = false;
     simpan(); gambarUji(t); isiLapisan();
     toast(p >= 0 ? "Batas dihapus." : "Batas ditambah pada pembacaan ke-" + k + ".");
   });
@@ -3859,7 +4110,8 @@ function pasang() {
   /* lapisan */
   ikat("btnAutoLap", "click", function () {
     var t = titikAktif(); if (!t) return;
-    t.batas = null; t.auto = true; simpan(); isiLapisan(); gambarUji(t);
+    var u = ujiAktif(t);
+    u.batas = null; u.auto = true; simpan(); isiLapisan(); gambarUji(t);
     toast("Batas lapisan dideteksi ulang.");
   });
   ikat("btnAddLap", "click", function () {
@@ -3869,6 +4121,10 @@ function pasang() {
   ikat("l_wakil", "change", function () {
     var t = titikAktif(); if (!t) return;
     t.wakil = $("l_wakil").value; simpan(); isiLapisan();
+  });
+  ikat("l_gabung", "change", function () {
+    var t = titikAktif(); if (!t) return;
+    t.gabung = $("l_gabung").value; simpan(); isiLapisan();
   });
 
   /* rekap */
@@ -3885,6 +4141,7 @@ function pasang() {
   ikat("mSave", "click", function () { tutupDlg("dlgMenu"); simpanJson(); });
   ikat("mKop", "click", function () { tutupDlg("dlgMenu"); isiKop(); bukaDlg("dlgKop"); });
   ikat("mLaporan", "click", function () { tutupDlg("dlgMenu"); bukaLaporan(); });
+  ikat("mPeta", "click", function () { tutupDlg("dlgMenu"); bukaPeta("lihat"); });
   ikat("btnKopTutup", "click", function () { tutupDlg("dlgKop"); });
   ["k_nama1", "k_nama2", "k_alamat", "k_teknisi", "k_hitung", "k_penyelia"].forEach(function (id) {
     ikat(id, "change", function () {
@@ -3956,6 +4213,41 @@ function pakaiTrase(ll, nama) {
   S.titik.forEach(function (t) { hitungSta(t); });
   simpan(); isiTrase(); isiTitik();
 }
+/**
+ * Buat deretan titik uji sepanjang trase mengikuti jarak antar titik yang
+ * disetel di tab Proyek, misalnya tiap 50 m sesuai permintaan pemberi kerja.
+ * Titik ditaruh di as jalan; posisi melintangnya bisa digeser belakangan.
+ */
+function buatTitikOtomatis() {
+  if (!S.trase) { toast("Impor trase dulu di tab Proyek."); return; }
+  var jarak = num(S.proyek.staInt, 0);
+  if (jarak < 1) { toast("Isi dulu jarak antar titik DCP."); return; }
+  var n = Math.floor(S.trase.total / jarak) + 1;
+  if (n > 400) {
+    toast("Jaraknya terlalu rapat: " + n + " titik. Perbesar jarak antar titik.");
+    return;
+  }
+  var berisi = S.titik.filter(titikBerisi).length;
+  var pesan = "Buat " + n + " titik uji tiap " + jarak + " m sepanjang trase " +
+    fmt(S.trase.total / 1000, 2) + " km, dari STA " + staTeks(S.proyek.sta0) + " sampai " +
+    staTeks(S.proyek.sta0 + S.trase.total) + "?";
+  if (berisi) pesan += "\n\n" + berisi + " titik yang sudah berisi pembacaan tetap dipertahankan; titik baru ditambahkan sesudahnya.";
+  else pesan += "\n\nTitik kosong yang ada sekarang akan diganti.";
+  if (!confirm(pesan)) return;
+  if (!berisi) { S.titik = []; S.seq = 0; }
+  for (var i = 0; i < n; i++) {
+    var jrk = Math.min(i * jarak, S.trase.total);
+    var t = newTitik();
+    t.sta = Math.round(S.proyek.sta0 + jrk);
+    var p = geserDariAs(S.trase, jrk, 0, 0);
+    if (p) { t.lat = p.lat; t.lon = p.lon; t.offset = 0; t.sisi = 0; }
+    S.titik.push(t);
+  }
+  sel = S.titik[0].id;
+  simpan(); isiTitik(); isiTrase(); isiRekap();
+  toast(n + " titik dibuat, tiap " + jarak + " m.");
+}
+
 function bukaPilihGaris() {
   var garis = (S.gambar && S.gambar.fitur ? S.gambar.fitur : []).filter(function (f) { return f.jenis === "garis"; });
   if (!garis.length) { toast("Tidak ada garis pada gambar."); return; }
