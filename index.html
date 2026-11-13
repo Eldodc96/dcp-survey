@@ -301,6 +301,10 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
 .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{flex:1;background:var(--surface-2);border:0;padding:8px 4px;font-size:12.5px;color:var(--ink-soft)}
 .seg button.on{background:var(--navy);color:#fff;font-weight:600}
+.posisibar{display:flex;gap:8px;align-items:center;margin-top:8px}
+.posisibar .seg{flex:1}
+.posisibar input{width:68px;text-align:center;padding:8px 4px}
+.posisibar .sat{font-size:11.5px;color:var(--ink-soft);white-space:nowrap}
 .seg button small{display:block;font-size:10px;font-weight:400;opacity:.8;margin-top:1px}
 </style>
 </head>
@@ -404,7 +408,10 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
   <div class="card">
     <h2>Titik uji <span class="hint" id="titikCount"></span></h2>
     <div id="titikList" class="plist"></div>
-    <button class="btn" id="btnAddTitik" type="button" style="margin-top:12px">Tambah titik</button>
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn" id="btnAddTitik" type="button">Tambah titik</button>
+      <button class="btn quiet" id="btnNomorUlang" type="button" style="flex:0 0 40%">Nomori ulang</button>
+    </div>
     <p class="note">Sentuh titik untuk mengisi pembacaan. Tombol ⋯ untuk mengubah kode, STA, dan posisi.</p>
   </div>
 </section>
@@ -415,6 +422,15 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
   <div id="ujiIsi" style="display:none">
     <div class="card">
       <button class="chipbtn" id="ujiChip" type="button"></button>
+      <div class="posisibar">
+        <div class="seg" id="segPosisi">
+          <button type="button" data-sisi="-1">Kiri</button>
+          <button type="button" data-sisi="0">CL</button>
+          <button type="button" data-sisi="1">Kanan</button>
+        </div>
+        <input id="p_jarak" type="number" step="0.5" min="0" inputmode="decimal" aria-label="Jarak dari as jalan dalam meter">
+        <span class="sat">m dari as</span>
+      </div>
       <div class="seg" id="segUji" style="margin-top:8px">
         <button type="button" data-uji="0" class="on">Percobaan 1</button>
         <button type="button" data-uji="1">Percobaan 2</button>
@@ -706,8 +722,7 @@ function baseState() {
     persentil: 90,
     tandaiTrase: false,
     petaDasar: true,
-    grafikTitik: true,
-    seq: 0
+    grafikTitik: true
   };
 }
 
@@ -716,14 +731,22 @@ function todayISO() {
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
 }
 
+/** Nomor titik berikutnya: satu lebih besar dari nomor terbesar yang ada. */
+function kodeBaru() {
+  var tertinggi = 0;
+  S.titik.forEach(function (t) {
+    var m = /^T-0*(\d+)$/.exec(String(t.kode || "").trim());
+    if (m) tertinggi = Math.max(tertinggi, parseInt(m[1], 10));
+  });
+  var n = tertinggi + 1;
+  return "T-" + (n < 10 ? "0" + n : n);
+}
 function newTitik() {
-  S.seq += 1;
-  var no = S.seq;
   return {
-    id: "T" + Date.now().toString(36) + no,
-    kode: "T-" + (no < 10 ? "0" + no : no),
+    id: "T" + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
+    kode: kodeBaru(),
     tanggal: S.proyek.tanggal,
-    lat: null, lon: null, offset: null,
+    lat: null, lon: null, offset: null, sisi: 0,
     sta: staTebakan(),
     konus: S.titik.length ? num(S.titik[S.titik.length - 1].konus, 60) : num(S.proyek.konus, 60),
     /* pedoman mensyaratkan pengujian duplo: dua percobaan berjarak 20 cm */
@@ -763,6 +786,15 @@ function adaData(u) { return titikData(u).length >= 2; }
 function titikBerisi(t) {
   pastikanUji(t);
   return t.uji.some(function (u) { return adaData(u); });
+}
+
+/** Urutkan titik menurut STA lalu nomori ulang T-01, T-02, dan seterusnya. */
+function nomoriUlang() {
+  S.titik.sort(function (a, b) { return num(a.sta, 0) - num(b.sta, 0); });
+  S.titik.forEach(function (t, i) {
+    var n = i + 1;
+    t.kode = "T-" + (n < 10 ? "0" + n : n);
+  });
 }
 
 function staTebakan() {
@@ -2498,8 +2530,15 @@ function isiUji() {
   pastikanUji(t);
   var u = ujiAktif(t);
   var n = t.uji.reduce(function (a, x) { return a + (titikData(x).length - 1); }, 0);
-  $("ujiChip").innerHTML = esc(t.kode) + " · STA " + staTeks(t.sta) +
-    "<span>" + n + " pembacaan · ubah</span>";
+  $("ujiChip").innerHTML = esc(t.kode) + " \u00B7 STA " + staTeks(t.sta) +
+    "<span>" + letakTeks(t) + " \u00B7 " + n + " pembacaan \u00B7 ubah</span>";
+  var sisi = num(t.sisi, 0);
+  Array.prototype.forEach.call(document.querySelectorAll("#segPosisi button"), function (b) {
+    b.classList.toggle("on", +b.dataset.sisi === sisi);
+  });
+  $("p_jarak").value = sisi === 0 ? "" : fmt(num(t.offset, 0), 1).replace(",", ".");
+  $("p_jarak").disabled = (sisi === 0);
+  $("p_jarak").placeholder = sisi === 0 ? "\u2014" : "3";
   Array.prototype.forEach.call(document.querySelectorAll("#segUji button"), function (b) {
     var i = +b.dataset.uji;
     b.classList.toggle("on", i === t.aktif);
@@ -2580,6 +2619,23 @@ function periksaUji(t) {
   $("ujiPeringatan").innerHTML =
     (pesan.length ? '<div class="warnbox">' + pesan.map(esc).join("<br>") + "</div>" : "") +
     (kabar.length ? '<div class="okbox">' + kabar.map(esc).join("<br>") + "</div>" : "");
+}
+
+/** Keterangan posisi melintang titik. */
+function letakTeks(t) {
+  var sisi = num(t.sisi, 0), j = num(t.offset, 0);
+  if (!sisi || !j) return "di as jalan (CL)";
+  return fmt(j, 1) + " m " + (sisi === 1 ? "kanan" : "kiri") + " as";
+}
+/** Setel posisi melintang titik; koordinat ikut dihitung ulang dari trase. */
+function terapkanPosisi(t, sisi, jarak) {
+  t.sisi = sisi;
+  t.offset = sisi === 0 ? 0 : Math.abs(num(jarak, 0));
+  if (S.trase) {
+    var s = Math.max(0, Math.min(S.trase.total, num(t.sta, 0) - num(S.proyek.sta0, 0)));
+    var p = geserDariAs(S.trase, s, t.sisi, t.offset);
+    if (p) { t.lat = p.lat; t.lon = p.lon; }
+  }
 }
 
 /* ----------------------------- dokumentasi ----------------------------- */
@@ -4049,6 +4105,12 @@ function pasang() {
   });
 
   /* titik */
+  ikat("btnNomorUlang", "click", function () {
+    if (!S.titik.length) { toast("Belum ada titik."); return; }
+    if (!confirm("Urutkan titik menurut STA lalu nomori ulang menjadi T-01 dan seterusnya?")) return;
+    nomoriUlang(); simpan(); isiTitik(); isiUji(); isiRekap();
+    toast("Titik dinomori ulang.");
+  });
   ikat("btnAddTitik", "click", function () {
     var t = newTitik(); S.titik.push(t); sel = t.id; simpan(); isiTitik(); buka("uji");
     toast("Titik " + t.kode + " ditambahkan.");
@@ -4158,6 +4220,22 @@ function pasang() {
   tampilSimpananPeta();
 
   /* uji */
+  Array.prototype.forEach.call(document.querySelectorAll("#segPosisi button"), function (b) {
+    b.addEventListener("click", function () {
+      var t = titikAktif(); if (!t) return;
+      var sisi = +b.dataset.sisi;
+      var jarak = num($("p_jarak").value, 0);
+      if (sisi !== 0 && !(jarak > 0)) jarak = 3;
+      terapkanPosisi(t, sisi, jarak);
+      simpan(); isiUji(); isiTitik();
+      if (sisi !== 0 && !S.trase) toast("Posisi tercatat. Koordinatnya menyusul setelah trase dimuat.");
+    });
+  });
+  ikat("p_jarak", "change", function () {
+    var t = titikAktif(); if (!t) return;
+    terapkanPosisi(t, num(t.sisi, 0), num($("p_jarak").value, 0));
+    simpan(); isiUji(); isiTitik();
+  });
   Array.prototype.forEach.call(document.querySelectorAll("#segUji button"), function (b) {
     b.addEventListener("click", function () {
       var t = titikAktif(); if (!t) return;
@@ -4350,7 +4428,7 @@ function buatTitikOtomatis() {
   if (berisi) pesan += "\n\n" + berisi + " titik yang sudah berisi pembacaan tetap dipertahankan; titik baru ditambahkan sesudahnya.";
   else pesan += "\n\nTitik kosong yang ada sekarang akan diganti.";
   if (!confirm(pesan)) return;
-  if (!berisi) { S.titik = []; S.seq = 0; }
+  if (!berisi) { S.titik = []; }
   for (var i = 0; i < n; i++) {
     var jrk = Math.min(i * jarak, S.trase.total);
     var t = newTitik();
