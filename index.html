@@ -336,6 +336,12 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
       <div class="field"><label for="f_ruas">Ruas</label><input id="f_ruas" placeholder="Jl. Kujawas – Oesao"></div>
       <div class="field"><label for="f_tgl">Tanggal</label><input id="f_tgl" type="date"></div>
     </div>
+    <div class="field"><label>Percobaan tiap titik</label>
+      <div class="seg" id="segJmlUji">
+        <button type="button" data-n="2" class="on">2 — duplo (pedoman)</button>
+        <button type="button" data-n="1">1 percobaan</button>
+      </div>
+    </div>
     <details class="lipat">
       <summary>Tim dan jenis lapisan</summary>
       <div class="row" style="margin-top:9px">
@@ -435,7 +441,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
         <button type="button" data-uji="0" class="on">Percobaan 1</button>
         <button type="button" data-uji="1">Percobaan 2</button>
       </div>
-      <p class="note" style="margin:6px 0 0">Pedoman: tiap titik diuji dua kali, berjarak 20 cm.</p>
+      <p class="note" style="margin:6px 0 0" id="catatanDuplo">Pedoman: tiap titik diuji dua kali, berjarak 20 cm.</p>
       <details class="lipat" id="setUji">
         <summary id="setRingkas">Konus dan pembacaan awal</summary>
         <div class="field" style="margin-top:10px"><label>Sudut konus</label>
@@ -502,7 +508,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     <div class="card">
       <h2>CBR wakil titik ini</h2>
       <div id="cbrBanding" style="margin-bottom:10px"></div>
-      <div class="field"><label for="l_gabung">Gabungan dua percobaan</label>
+      <div class="field" id="wrapGabung"><label for="l_gabung">Gabungan dua percobaan</label>
         <select id="l_gabung">
           <option value="rata">Rata-rata kedua percobaan</option>
           <option value="min">Ambil yang terkecil</option>
@@ -714,7 +720,8 @@ function baseState() {
     v: 1,
     proyek: {
       nama: "", ruas: "", tim: "", tanggal: todayISO(),
-      lapisan: "Subgrade", konus: 60, sta0: 0, staInt: 50
+      lapisan: "Subgrade", konus: 60, sta0: 0, staInt: 50,
+      jmlUji: 2            // percobaan tiap titik: 2 (duplo, sesuai pedoman) atau 1
     },
     trase: null,          // {nama, ll:[[lon,lat]..], xy:[[e,n]..], cum:[..], total}
     gambar: { fitur: [], overlay: [] },   // seluruh isi KMZ untuk latar peta
@@ -781,12 +788,20 @@ function pastikanUji(t) {
   if (!t.gabung) t.gabung = "rata";
   return t;
 }
-function ujiAktif(t) { pastikanUji(t); return t.uji[t.aktif]; }
-function adaData(u) { return titikData(u).length >= 2; }
-function titikBerisi(t) {
+function ujiAktif(t) {
   pastikanUji(t);
-  return t.uji.some(function (u) { return adaData(u); });
+  if (jmlUji() === 1) t.aktif = 0;
+  return t.uji[t.aktif];
 }
+/** Banyaknya percobaan tiap titik menurut setelan proyek. */
+function jmlUji() { return num(S.proyek.jmlUji, 2) === 1 ? 1 : 2; }
+/** Percobaan yang dipakai pada titik ini: dibatasi setelan proyek, yang berisi saja. */
+function ujiDipakai(t) {
+  pastikanUji(t);
+  return t.uji.slice(0, jmlUji()).filter(function (u) { return adaData(u); });
+}
+function adaData(u) { return titikData(u).length >= 2; }
+function titikBerisi(t) { return ujiDipakai(t).length > 0; }
 
 /** Urutkan titik menurut STA lalu nomori ulang T-01, T-02, dan seterusnya. */
 function nomoriUlang() {
@@ -1018,9 +1033,9 @@ function cbrWakilUji(u, konus, cara) {
 /** CBR wakil satu titik: hasil dua percobaan digabung. */
 function cbrWakil(t) {
   pastikanUji(t);
-  var nilai = t.uji.map(function (u) {
-    return adaData(u) ? cbrWakilUji(u, t.konus, t.wakil) : null;
-  }).filter(function (x) { return x !== null; });
+  var nilai = ujiDipakai(t).map(function (u) {
+    return cbrWakilUji(u, t.konus, t.wakil);
+  });
   if (!nilai.length) return null;
   if (nilai.length === 1) return nilai[0];
   if (t.gabung === "min") return Math.min.apply(null, nilai);
@@ -1041,7 +1056,7 @@ function dataRekap() {
     d.push({
       id: t.id, kode: t.kode, sta: num(t.sta), cbr: cbrBulat(c), asli: c,
       nlap: hitungLapisan(t.uji[0], t.konus).lapis.length,
-      nuji: t.uji.filter(function (u) { return adaData(u); }).length
+      nuji: ujiDipakai(t).length
     });
   });
   d.sort(function (a, b) { return a.sta - b.sta; });
@@ -2055,7 +2070,7 @@ function lembarDCP(t, u, no, nama) {
   L.t("G3", "Tim Investigasi", ST.tebal); L.gabung("G3:I3");
   L.t("J3", ":"); L.t("K3", P.tim || "-");
   L.t("A4", "Lokasi / Titik", ST.tebal); L.gabung("A4:B4");
-  L.t("C4", ": " + (P.ruas || "-") + " / " + t.kode + " (percobaan " + no + ")"); L.gabung("C4:F4");
+  L.t("C4", ": " + (P.ruas || "-") + " / " + t.kode + (no ? " (percobaan " + no + ")" : "")); L.gabung("C4:F4");
   L.t("G4", "Tanggal", ST.tebal); L.gabung("G4:I4");
   L.t("J4", ":"); L.t("K4", t.tanggal || P.tanggal || "-");
   L.t("A5", "STA", ST.tebal); L.gabung("A5:B5");
@@ -2132,7 +2147,7 @@ function lembarDCP(t, u, no, nama) {
   L.grafik.push({
     c0: 0, r0: rc + 2, c1: 9, r1: rc + 22,
     xml: grafikXml({
-      judul: "Grafik DCP \u2014 " + t.kode + " percobaan " + no + "  (STA " + staTeks(t.sta) + ")",
+      judul: "Grafik DCP \u2014 " + t.kode + (no ? " percobaan " + no : "") + "  (STA " + staTeks(t.sta) + ")",
       xJudul: "Kumulatif tumbukan", yJudul: "Kumulatif penetrasi (mm)",
       yBalik: true, seri: seri
     })
@@ -2238,10 +2253,10 @@ function buatWorkbook() {
   var dipakai = [], lembar = [];
   S.titik.forEach(function (t) {
     pastikanUji(t);
-    t.uji.forEach(function (u, i) {
+    t.uji.slice(0, jmlUji()).forEach(function (u, i) {
       if (!adaData(u)) return;
-      var nm = namaLembar("DCP " + t.kode + " P" + (i + 1), dipakai);
-      var L = lembarDCP(t, u, i + 1, nm);
+      var nm = namaLembar("DCP " + t.kode + (jmlUji() === 2 ? " P" + (i + 1) : ""), dipakai);
+      var L = lembarDCP(t, u, jmlUji() === 2 ? i + 1 : 0, nm);
       if (!S.grafikTitik) L.grafik = [];
       lembar.push(L);
     });
@@ -2408,6 +2423,9 @@ function isiProyek() {
   $("f_nama").value = P.nama; $("f_ruas").value = P.ruas; $("f_tim").value = P.tim;
   $("f_tgl").value = P.tanggal; $("f_lapis").value = P.lapisan;
   $("f_sta0").value = P.sta0; $("f_staint").value = P.staInt;
+  Array.prototype.forEach.call(document.querySelectorAll("#segJmlUji button"), function (b) {
+    b.classList.toggle("on", +b.dataset.n === jmlUji());
+  });
   $("r_persentil").value = num(S.persentil, 90);
   $("x_grafik").checked = !!S.grafikTitik;
   $("f_tandai").checked = !!S.tandaiTrase;
@@ -2457,11 +2475,11 @@ function isiTitik() {
     L.innerHTML = S.titik.map(function (t) {
       pastikanUji(t);
       var c = cbrWakil(t);
-      var n = t.uji.reduce(function (a, u) { return a + (titikData(u).length - 1); }, 0);
-      var nu = t.uji.filter(function (u) { return adaData(u); }).length;
+      var n = t.uji.slice(0, jmlUji()).reduce(function (a, u) { return a + (titikData(u).length - 1); }, 0);
+      var nu = ujiDipakai(t).length;
       return '<div class="pitem' + (t.id === sel ? " sel" : "") + '" data-id="' + t.id + '">' +
         '<div class="k">' + esc(t.kode) + '<div class="m">STA ' + staTeks(t.sta) + " · " + n +
-        " pembacaan · " + nu + " dari 2 percobaan</div></div>" +
+        " pembacaan" + (jmlUji() === 2 ? " \u00B7 " + nu + " dari 2 percobaan" : "") + "</div></div>" +
         '<div class="v"><b>' + (c === null ? "—" : fmt(c, 2)) + "</b><span>CBR %</span></div>" +
         '<button class="more" type="button" data-more="' + t.id + '">\u22EF</button></div>';
     }).join("");
@@ -2529,7 +2547,7 @@ function isiUji() {
   if (!t) return;
   pastikanUji(t);
   var u = ujiAktif(t);
-  var n = t.uji.reduce(function (a, x) { return a + (titikData(x).length - 1); }, 0);
+  var n = t.uji.slice(0, jmlUji()).reduce(function (a, x) { return a + (titikData(x).length - 1); }, 0);
   $("ujiChip").innerHTML = esc(t.kode) + " \u00B7 STA " + staTeks(t.sta) +
     "<span>" + letakTeks(t) + " \u00B7 " + n + " pembacaan \u00B7 ubah</span>";
   var sisi = num(t.sisi, 0);
@@ -2539,6 +2557,8 @@ function isiUji() {
   $("p_jarak").value = sisi === 0 ? "" : fmt(num(t.offset, 0), 1).replace(",", ".");
   $("p_jarak").disabled = (sisi === 0);
   $("p_jarak").placeholder = sisi === 0 ? "\u2014" : "3";
+  $("segUji").style.display = jmlUji() === 2 ? "" : "none";
+  $("catatanDuplo").style.display = jmlUji() === 2 ? "" : "none";
   Array.prototype.forEach.call(document.querySelectorAll("#segUji button"), function (b) {
     var i = +b.dataset.uji;
     b.classList.toggle("on", i === t.aktif);
@@ -2605,11 +2625,11 @@ function periksaUji(t) {
     if (akhir.pen > 900) pesan.push("Kumulatif penetrasi sudah melewati 90 cm, di luar jangkauan alat.");
   }
   if (n >= 2 && n < 6) kabar.push("Data masih sedikit. Deteksi lapisan otomatis bekerja mulai sekitar 5 pembacaan.");
-  if (adaData(t.uji[0]) && !adaData(t.uji[1])) {
+  if (jmlUji() === 2 && adaData(t.uji[0]) && !adaData(t.uji[1])) {
     kabar.push("Pedoman mensyaratkan pengujian duplo: percobaan kedua berjarak 20 cm dari titik pertama.");
   }
   var ab = t.uji.map(function (x) { return adaData(x) ? cbrWakilUji(x, t.konus, t.wakil) : null; });
-  if (ab[0] !== null && ab[1] !== null) {
+  if (jmlUji() === 2 && ab[0] !== null && ab[1] !== null) {
     var besar = Math.max(ab[0], ab[1]), kecil = Math.min(ab[0], ab[1]);
     if (kecil > 0 && besar / kecil > 2) {
       pesan.push("CBR kedua percobaan jauh berbeda (" + fmt(ab[0], 2) + " % dan " + fmt(ab[1], 2) +
@@ -2730,7 +2750,8 @@ function isiLapisan() {
   $("lapIsi").style.display = ada ? "" : "none";
   if (!ada) return;
   var h = hitungLapisan(u, t.konus), pts = h.pts;
-  $("lapMode").textContent = "\u2014 percobaan " + (t.aktif + 1) + (u.auto ? ", otomatis" : ", disetel manual");
+  $("lapMode").textContent = (jmlUji() === 2 ? "\u2014 percobaan " + (t.aktif + 1) + ", " : "\u2014 ") +
+    (u.auto ? "otomatis" : "disetel manual");
   var total = pts[pts.length - 1].pen || 1;
   $("strataCol").innerHTML = h.lapis.map(function (l, i) {
     var tinggi = Math.max(8, Math.round(100 * l.tebal / total));
@@ -2773,6 +2794,9 @@ function isiLapisan() {
   });
   $("l_wakil").value = t.wakil;
   $("l_gabung").value = t.gabung;
+  var duplo = jmlUji() === 2;
+  $("cbrBanding").style.display = duplo ? "" : "none";
+  $("wrapGabung").style.display = duplo ? "" : "none";
   var ab = t.uji.map(function (x) { return adaData(x) ? cbrWakilUji(x, t.konus, t.wakil) : null; });
   $("cbrBanding").innerHTML =
     '<div class="kv"><span>Percobaan 1</span><b>' + (ab[0] === null ? "\u2014" : fmt(ab[0], 2) + " %") + "</b></div>" +
@@ -3164,10 +3188,11 @@ async function bukaLaporan() {
   toast("Menyusun laporan\u2026");
   var html = [];
   punya.forEach(function (t) {
-    t.uji.forEach(function (u, i) {
+    t.uji.slice(0, jmlUji()).forEach(function (u, i) {
       if (!adaData(u)) return;
-      html.push(lembarFormulir(t, u, i + 1));
-      html.push(lembarGrafik(t, u, i + 1));
+      var no = jmlUji() === 2 ? i + 1 : 0;
+      html.push(lembarFormulir(t, u, no));
+      html.push(lembarGrafik(t, u, no));
     });
     html.push(lembarDokumentasi(t));
   });
@@ -3495,14 +3520,15 @@ async function buatDocx() {
   var bagian = [];
   for (var i = 0; i < punya.length; i++) {
     var t = punya[i];
-    for (var j = 0; j < t.uji.length; j++) {
+    for (var j = 0; j < Math.min(t.uji.length, jmlUji()); j++) {
       var u = t.uji[j];
       if (!adaData(u)) continue;
       var png = await batasWaktu(svgKePng(grafikLampiranC(t, u), 1240), 15000);
       var gr = tanam(png.uri, png.w, png.h);
       gr.no = 500 + i * 20 + j * 2;
-      bagian.push(dFormulir(t, u, j + 1, logo));
-      bagian.push(dGrafik(t, u, j + 1, logo, gr));
+      var noUji = jmlUji() === 2 ? j + 1 : 0;
+      bagian.push(dFormulir(t, u, noUji, logo));
+      bagian.push(dGrafik(t, u, noUji, logo, gr));
     }
     var foto = (t.foto || []).map(function (f, k) {
       var g = tanam(f.d, f.w || 900, f.h || 600);
@@ -4056,6 +4082,21 @@ function pasang() {
   /* proyek */
   ["f_nama", "f_ruas", "f_tim", "f_tgl", "f_lapis", "f_sta0", "f_staint"].forEach(function (id) {
     ikat(id, "change", simpanProyek);
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll("#segJmlUji button"), function (b) {
+    b.addEventListener("click", function () {
+      var n = +b.dataset.n;
+      if (n === 1) {
+        var kena = S.titik.filter(function (t) { pastikanUji(t); return adaData(t.uji[1]); }).length;
+        if (kena && !confirm("Ada " + kena + " titik yang percobaan keduanya sudah terisi. " +
+          "Datanya tetap tersimpan, tetapi tidak ikut dihitung maupun dicetak. Lanjutkan?")) return;
+      }
+      S.proyek.jmlUji = n;
+      S.titik.forEach(function (t) { pastikanUji(t); if (n === 1) t.aktif = 0; });
+      simpan(); isiProyek(); isiTitik(); isiUji(); isiLapisan(); isiRekap();
+      toast(n === 1 ? "Satu percobaan tiap titik." : "Dua percobaan tiap titik (duplo).");
+    });
   });
 
   /* trase */
