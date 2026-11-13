@@ -1463,10 +1463,14 @@ function pandanganPenuh(W, H, pad) {
   };
 }
 
+/* Tingkat terdalam yang masih punya citra. Bila layanan menjawab tidak ada
+   ubin pada suatu tingkat, nilai ini turun sendiri, sehingga perbesaran
+   berikutnya memakai ubin tingkat terdalam yang ada dan hanya diperbesar. */
+var ZOOM_MAKS = 19;
 /** Tingkat perbesaran ubin yang cocok dengan skala pandangan. */
 function zoomUbin(v) {
   var z = Math.round(Math.log(v.s * KELILING / 256) / Math.LN2);
-  return Math.max(1, Math.min(19, z));
+  return Math.max(1, Math.min(ZOOM_MAKS, z));
 }
 /** Letak dan ukuran satu ubin pada layar. */
 function petakUbin(v, W, H, z, ty, tx) {
@@ -3273,7 +3277,7 @@ function petaZoom(faktor, px, py) {
   if (px === undefined) { px = PETA.W / 2; py = PETA.H / 2; }
   var mx = (px - PETA.W / 2) / v.s + v.cx;
   var my = v.cy - (py - PETA.H / 2) / v.s;
-  v.s = Math.max(0.00002, Math.min(6, v.s * faktor));
+  v.s = Math.max(0.00002, Math.min(12, v.s * faktor));
   v.cx = mx - (px - PETA.W / 2) / v.s;
   v.cy = my + (py - PETA.H / 2) / v.s;
   lukisPetaPenuh();
@@ -3336,7 +3340,7 @@ function pasangPeta() {
       var d = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]);
       if (cubit.jarak > 4) {
         var tengahX = (p[0][0] + p[1][0]) / 2, tengahY = (p[0][1] + p[1][1]) / 2;
-        var target = Math.max(0.00002, Math.min(6, cubit.s * d / cubit.jarak));
+        var target = Math.max(0.00002, Math.min(12, cubit.s * d / cubit.jarak));
         petaZoom(target / PETA.v.s, tengahX, tengahY);
       }
       bergerak = true;
@@ -3458,7 +3462,14 @@ function pintaUbin(z, y, x) {
       return;
     }
     return fetch(alamatUbin(z, y, x)).then(function (r) {
-      if (!r.ok) throw new Error("gagal");
+      if (!r.ok) {
+        /* layanan tidak punya citra sedetail ini: turunkan batas kedalaman
+           supaya perbesaran berikutnya memakai tingkat yang masih ada */
+        if (r.status === 404 || r.status === 400) {
+          if (z <= ZOOM_MAKS) { ZOOM_MAKS = Math.max(14, z - 1); jadwalLukis(); }
+        }
+        throw new Error("gagal");
+      }
       return r.arrayBuffer();
     }).then(function (ab) {
       UBIN_SIAP[kunci] = URL.createObjectURL(new Blob([ab], { type: "image/jpeg" }));
@@ -3482,7 +3493,8 @@ function lapisanUbin(v, W, H) {
     var kunci = u.z + "/" + u.y + "/" + u.x;
     if (!UBIN_SIAP[kunci]) {
       pintaUbin(u.z, u.y, u.x);
-      for (var d = 1; d <= 6 && u.z - d >= 1; d++) {
+      var ketemu = false;
+      for (var d = 1; d <= 8 && u.z - d >= 1; d++) {
         var zz = u.z - d, yy = Math.floor(u.y / Math.pow(2, d)), xx = Math.floor(u.x / Math.pow(2, d));
         var ki = zz + "/" + yy + "/" + xx;
         if (UBIN_SIAP[ki]) {
@@ -3491,11 +3503,17 @@ function lapisanUbin(v, W, H) {
             var p = petakUbin(v, W, H, zz, yy, xx);
             keluar.push({ url: UBIN_SIAP[ki], x: p.x, y: p.y, sisi: p.sisi });
           }
+          ketemu = true;
           break;
         }
+        /* dua tingkat terdekat ikut diminta: biasanya sudah ada di simpanan HP,
+           jadi alasnya tidak melompat ke ubin yang terlalu kasar */
+        if (d <= 2) pintaUbin(zz, yy, xx);
       }
+      if (!ketemu) { /* alas belum ada; ubin ini dibiarkan menunggu */ }
     }
-    keluar.push({ url: UBIN_SIAP[kunci] || alamatUbin(u.z, u.y, u.x), x: u.x_, y: u.y_, sisi: u.sisi });
+    var sumber = UBIN_SIAP[kunci] || (UBIN_GAGAL[kunci] ? null : alamatUbin(u.z, u.y, u.x));
+    if (sumber) keluar.push({ url: sumber, x: u.x_, y: u.y_, sisi: u.sisi });
   });
   return keluar;
 }
@@ -3506,6 +3524,7 @@ function ubinKoridor(zMaks, margin) {
   var kotak = batasPeta(); if (!kotak) return [];
   var m = (margin || 150) * 1.2;
   var daftar = [], lihat = {};
+  zMaks = Math.min(zMaks, ZOOM_MAKS);
   for (var z = 12; z <= zMaks; z++) {
     var ppm = 256 * Math.pow(2, z) / KELILING, n = Math.pow(2, z);
     var tx0 = Math.floor((kotak.x0 - m + KELILING / 2) * ppm / 256);
