@@ -146,6 +146,28 @@ svg.chart{width:100%;height:auto;display:block;touch-action:manipulation}
 .chip.ok{background:color-mix(in srgb,var(--green) 16%,transparent);border-color:var(--green);color:var(--green)}
 .chip.no{background:color-mix(in srgb,var(--orange) 16%,transparent);border-color:var(--orange);color:var(--orange)}
 
+.sembunyi{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;border:0;
+  opacity:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap
+}
+/* ---- kamera dalam aplikasi ---- */
+#kamera{display:none;position:fixed;inset:0;z-index:78;background:#000}
+#kamera.on{display:block}
+#kameraVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+.kamerabar{
+  position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(to top,rgba(0,0,0,.6),transparent)
+}
+.kamerabar button{background:rgba(255,255,255,.9);border:0;border-radius:9px;color:#0F2436;font-size:13px;font-weight:600;padding:9px 13px}
+.kamerabar .jepret{
+  width:66px;height:66px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,.5);padding:0
+}
+.kamerabar .jepret:active{background:#ddd}
+#kameraKet{
+  position:absolute;left:0;right:0;top:calc(10px + env(safe-area-inset-top,0px));z-index:2;text-align:center;
+  color:#fff;font-size:12.5px;text-shadow:0 1px 3px rgba(0,0,0,.9);pointer-events:none
+}
 /* ---- peta layar penuh ---- */
 #peta{display:none;position:fixed;inset:0;z-index:72;background:#2B3A45}
 #peta.on{display:block}
@@ -429,8 +451,8 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
         <button class="btn quiet" id="btnFotoKamera" type="button">Ambil foto</button>
         <button class="btn quiet" id="btnFotoGaleri" type="button">Dari galeri</button>
       </div>
-      <input type="file" id="fileFotoKamera" accept="image/*" capture="environment" hidden>
-      <input type="file" id="fileFotoGaleri" accept="image/*" multiple hidden>
+      <input type="file" id="fileFotoKamera" class="sembunyi" accept="image/*" capture="environment">
+      <input type="file" id="fileFotoGaleri" class="sembunyi" accept="image/*" multiple>
       <p class="note">Maksimal 4 foto per titik, dicetak pada lampiran dokumentasi.</p>
     </div>
     <div class="card">
@@ -551,6 +573,16 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     <button class="btn" id="btnTitikTutup" type="button">Selesai</button>
   </div>
 </dialog>
+<div id="kamera">
+  <video id="kameraVideo" playsinline autoplay muted></video>
+  <div id="kameraKet"></div>
+  <div class="kamerabar">
+    <button type="button" id="kameraBatal">Batal</button>
+    <button type="button" id="kameraJepret" class="jepret" aria-label="Ambil foto"></button>
+    <button type="button" id="kameraBalik">Putar</button>
+  </div>
+</div>
+
 <div id="peta">
   <svg id="petaSvg" xmlns="http://www.w3.org/2000/svg"></svg>
   <div class="petabar">
@@ -2584,9 +2616,13 @@ function pasangFoto(file) {
       var c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(img.width * sk));
       c.height = Math.max(1, Math.round(img.height * sk));
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      var tt = titikAktif(); if (!tt) return;
-      tt.foto.push({ d: c.toDataURL("image/jpeg", 0.68), w: c.width, h: c.height, ket: "" });
+      var g = c.getContext("2d");
+      if (!g) { toast("Peramban ini tidak bisa mengolah gambar."); return; }
+      try {
+        g.drawImage(img, 0, 0, c.width, c.height);
+        var tt = titikAktif(); if (!tt) return;
+        tt.foto.push({ d: c.toDataURL("image/jpeg", 0.68), w: c.width, h: c.height, ket: "" });
+      } catch (e) { toast("Foto gagal diolah."); return; }
       simpan(); isiFoto();
     };
     img.onerror = function () { toast("Gambar tidak terbaca."); };
@@ -2614,8 +2650,12 @@ function pasangLogo(file) {
       var c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(img.width * sk));
       c.height = Math.max(1, Math.round(img.height * sk));
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      INST.logo = c.toDataURL("image/png");
+      var g = c.getContext("2d");
+      if (!g) { toast("Peramban ini tidak bisa mengolah gambar."); return; }
+      try {
+        g.drawImage(img, 0, 0, c.width, c.height);
+        INST.logo = c.toDataURL("image/png");
+      } catch (e) { toast("Logo gagal diolah."); return; }
       simpanInstansi(); isiKop(); toast("Logo tersimpan.");
     };
     img.onerror = function () { toast("Gambar tidak terbaca."); };
@@ -3865,6 +3905,71 @@ function tampilGps() {
 }
 
 /* ======================================================================
+   Kamera dalam aplikasi — jalur utama pengambilan foto dokumentasi
+   ====================================================================== */
+var KAM = { aliran: null, depan: false };
+
+function kameraTersedia() {
+  return !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+async function bukaKamera() {
+  if (!kameraTersedia()) return false;
+  try {
+    if (KAM.aliran) KAM.aliran.getTracks().forEach(function (t) { t.stop(); });
+    KAM.aliran = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: KAM.depan ? "user" : { ideal: "environment" },
+        width: { ideal: 1920 }, height: { ideal: 1440 }
+      },
+      audio: false
+    });
+  } catch (e) {
+    toast(e && e.name === "NotAllowedError"
+      ? "Izin kamera ditolak. Buka pengaturan situs lalu izinkan kamera."
+      : "Kamera tidak bisa dibuka di perangkat ini.");
+    return false;
+  }
+  var v = $("kameraVideo");
+  v.srcObject = KAM.aliran;
+  try { await v.play(); } catch (e) { /* abaikan */ }
+  var t = titikAktif();
+  $("kameraKet").textContent = t
+    ? t.kode + " \u00B7 STA " + staTeks(t.sta) + " \u00B7 foto " + ((t.foto || []).length + 1) + " dari " + FOTO_MAKS
+    : "";
+  $("kamera").classList.add("on");
+  document.body.style.overflow = "hidden";
+  return true;
+}
+function tutupKamera() {
+  if (KAM.aliran) { KAM.aliran.getTracks().forEach(function (t) { t.stop(); }); KAM.aliran = null; }
+  $("kameraVideo").srcObject = null;
+  $("kamera").classList.remove("on");
+  document.body.style.overflow = "";
+}
+function jepretFoto() {
+  var t = titikAktif(); if (!t) { toast("Pilih titik dulu."); return; }
+  if (!t.foto) t.foto = [];
+  if (t.foto.length >= FOTO_MAKS) { toast("Sudah " + FOTO_MAKS + " foto pada titik ini."); return; }
+  var v = $("kameraVideo");
+  var lebar = v.videoWidth, tinggi = v.videoHeight;
+  if (!lebar || !tinggi) { toast("Kamera belum siap, coba sebentar lagi."); return; }
+  var maks = 900, sk = Math.min(1, maks / Math.max(lebar, tinggi));
+  var c = document.createElement("canvas");
+  c.width = Math.round(lebar * sk); c.height = Math.round(tinggi * sk);
+  var g = c.getContext("2d");
+  if (!g) { toast("Peramban ini tidak bisa mengolah gambar."); return; }
+  try {
+    g.drawImage(v, 0, 0, c.width, c.height);
+    t.foto.push({ d: c.toDataURL("image/jpeg", 0.68), w: c.width, h: c.height, ket: "" });
+  } catch (e) { toast("Foto gagal diambil, coba sekali lagi."); return; }
+  simpan(); isiFoto();
+  $("kameraKet").textContent = t.kode + " \u00B7 STA " + staTeks(t.sta) +
+    " \u00B7 foto " + (t.foto.length + 1) + " dari " + FOTO_MAKS;
+  toast("Foto ke-" + t.foto.length + " tersimpan.");
+  if (t.foto.length >= FOTO_MAKS) tutupKamera();
+}
+
+/* ======================================================================
    Pemasangan kejadian
    ====================================================================== */
 function ikat(id, ev, fn) { var el = $(id); if (el) el.addEventListener(ev, fn); }
@@ -4083,7 +4188,18 @@ function pasang() {
     simpan(); isiUji(); $("e_mm").focus();
   }
   ikat("e_catat", "click", catat);
-  ikat("btnFotoKamera", "click", function () { $("fileFotoKamera").click(); });
+  ikat("btnFotoKamera", "click", async function () {
+    var t = titikAktif(); if (!t) { toast("Pilih titik dulu."); return; }
+    if (await bukaKamera()) return;
+    /* jalur cadangan: serahkan ke aplikasi kamera bawaan lewat pemilih berkas */
+    $("fileFotoKamera").click();
+    if (!window.isSecureContext) {
+      toast("Kamera langsung butuh alamat https. Pakai \u201cDari galeri\u201d, atau buka aplikasi dari alamat https.");
+    }
+  });
+  ikat("kameraBatal", "click", tutupKamera);
+  ikat("kameraJepret", "click", jepretFoto);
+  ikat("kameraBalik", "click", function () { KAM.depan = !KAM.depan; bukaKamera(); });
   ikat("btnFotoGaleri", "click", function () { $("fileFotoGaleri").click(); });
   ["fileFotoKamera", "fileFotoGaleri"].forEach(function (id) {
     ikat(id, "change", function (e) {
