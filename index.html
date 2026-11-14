@@ -407,7 +407,8 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
       <button class="btn danger" id="btnReset" type="button" style="flex:0 0 30%">Kosongkan</button>
     </div>
     <input type="file" id="fileJson" accept=".json" hidden>
-    <p class="note">Data tersimpan otomatis di HP ini. File simpanan berguna untuk cadangan atau pindah HP.</p>
+    <p class="note" id="ringkasData"></p>
+    <p class="note">Data tersimpan otomatis di HP ini. Nama berkas simpanan memuat jumlah titik dan jam penyimpanan, supaya cadangan tidak tertukar.</p>
   </div>
 </section>
 
@@ -461,9 +462,8 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
           <div class="konusgrid" id="konusUji"></div>
           <input type="hidden" id="u_konus" value="60">
         </div>
-        <div class="field"><label for="u_awal">Pembacaan awal mistar (mm)</label><input id="u_awal" type="number" step="1" value="0"></div>
       </details>
-      <div class="entri">
+      <div class="entri" id="entriBaris">
         <select id="e_tumb" aria-label="Jumlah tumbukan">
           <option value="1">1×</option><option value="2">2×</option><option value="3">3×</option>
           <option value="5">5×</option><option value="10">10×</option>
@@ -808,6 +808,7 @@ function newTitik() {
 function ujiBaru() {
   return {
     awal: 0,
+    awalDiisi: false,    // pembacaan awal mistar dicatat lewat tombol Catat
     bacaan: [],          // [{t:jumlah tumbukan, mm:pembacaan mistar}]
     batas: null,         // indeks titik data pembatas lapisan (1..n-1)
     auto: true
@@ -823,6 +824,11 @@ function pastikanUji(t) {
     delete t.awal; delete t.bacaan; delete t.batas; delete t.auto;
   }
   while (t.uji.length < 2) t.uji.push(ujiBaru());
+  t.uji.forEach(function (u) {
+    if (u.awalDiisi === undefined) {
+      u.awalDiisi = (u.bacaan && u.bacaan.length > 0) || num(u.awal, 0) !== 0;
+    }
+  });
   if (t.aktif === undefined || t.aktif < 0 || t.aktif > 1) t.aktif = 0;
   if (!t.gabung) t.gabung = "rata";
   return t;
@@ -2552,6 +2558,10 @@ function isiProyek() {
   $("r_persentil").value = num(S.persentil, 90);
   $("x_grafik").checked = !!S.grafikTitik;
   $("f_tandai").checked = !!S.tandaiTrase;
+  var rd = ringkasData();
+  $("ringkasData").textContent = "Isi sekarang: " + rd.titik + " titik, " + rd.terisi +
+    " sudah berisi pembacaan, " + rd.bacaan + " baris pembacaan" +
+    (rd.foto ? ", " + rd.foto + " foto" : "") + ".";
   $("f_dasar").checked = S.petaDasar !== false;
   isiTrase();
   kepala();
@@ -2727,13 +2737,25 @@ function isiUji() {
     var jml = titikData(t.uji[i]).length - 1;
     b.innerHTML = "Percobaan " + (i + 1) + "<small>" + (jml ? jml + " pembacaan" : "kosong") + "</small>";
   });
-  $("u_awal").value = u.awal;
   $("u_konus").value = String(t.konus);
-  $("setRingkas").textContent = "Konus " + num(t.konus, 60) + "\u00B0 \u00B7 pembacaan awal " + num(u.awal) + " mm";
+  $("setRingkas").textContent = "Konus " + num(t.konus, 60) + "\u00B0" +
+    (u.awalDiisi ? " \u00B7 pembacaan awal " + num(u.awal) + " mm" : " \u00B7 pembacaan awal belum diisi");
+  /* selama pembacaan awal belum ada, isian hanya menerima angka itu */
+  $("e_tumb").style.display = u.awalDiisi ? "" : "none";
+  $("entriBaris").style.gridTemplateColumns = u.awalDiisi ? "72px 1fr 92px" : "1fr 112px";
+  $("e_mm").placeholder = u.awalDiisi ? "bacaan mm" : "pembacaan awal mistar (mm)";
+  $("e_catat").textContent = u.awalDiisi ? "Catat" : "Catat awal";
   isiKonus("konusUji", "u_konus", t.konus, function () {
     $("u_konus").dispatchEvent(new Event("change"));
   });
   var tb = document.querySelector("#ujiTabel tbody"), kum = 0, baris = [];
+  if (u.awalDiisi) {
+    baris.push('<tr><td class="num">awal</td><td class="num">0</td>' +
+      '<td class="inp"><input type="number" inputmode="numeric" data-k="awal" value="' + esc(u.awal) + '"></td>' +
+      '<td class="num">0</td><td>' +
+      (u.bacaan.length ? "" : '<button class="btn quiet sm" data-hapusawal="1" style="padding:4px 7px">\u00D7</button>') +
+      "</td></tr>");
+  }
   for (var i = 0; i < u.bacaan.length; i++) {
     kum += num(u.bacaan[i].t, 1);
     var pen = u.bacaan[i].mm === "" ? "" : (num(u.bacaan[i].mm) - num(u.awal));
@@ -2744,14 +2766,22 @@ function isiUji() {
       '<td><button class="btn quiet sm" data-hapus="' + i + '" style="padding:4px 7px">\u00D7</button></td></tr>');
   }
   tb.innerHTML = baris.join("") ||
-    '<tr><td colspan="5" style="padding:14px;color:#8a9aa8">Ketik bacaan mistar di atas lalu tekan Catat.</td></tr>';
+    '<tr><td colspan="5" style="padding:14px;color:#8a9aa8">Baca mistar sebelum ditumbuk, ketik angkanya di atas, lalu tekan Catat awal.</td></tr>';
   Array.prototype.forEach.call(tb.querySelectorAll("input"), function (el) {
     el.addEventListener("change", function () {
       var tt = titikAktif(); if (!tt) return;
       var uu = ujiAktif(tt), i = +el.dataset.i;
-      if (el.dataset.k === "t") uu.bacaan[i].t = el.value === "" ? 1 : num(el.value, 1);
+      if (el.dataset.k === "awal") uu.awal = num(el.value);
+      else if (el.dataset.k === "t") uu.bacaan[i].t = el.value === "" ? 1 : num(el.value, 1);
       else uu.bacaan[i].mm = el.value === "" ? "" : num(el.value);
       if (uu.auto) uu.batas = null;
+      simpan(); isiUji();
+    });
+  });
+  Array.prototype.forEach.call(tb.querySelectorAll("[data-hapusawal]"), function (el) {
+    el.addEventListener("click", function () {
+      var uu = ujiAktif(titikAktif());
+      uu.awal = 0; uu.awalDiisi = false;
       simpan(); isiUji();
     });
   });
@@ -2787,6 +2817,9 @@ function periksaUji(t) {
     if (akhir.pen > 900) pesan.push("Kumulatif penetrasi sudah melewati 90 cm, di luar jangkauan alat.");
   }
   if (n >= 2 && n < 6) kabar.push("Data masih sedikit. Deteksi lapisan otomatis bekerja mulai sekitar 5 pembacaan.");
+  if (!ujiAktif(t).awalDiisi) {
+    kabar.push("Mulai dengan membaca mistar sebelum ditumbuk, lalu tekan Catat awal.");
+  }
   if (jmlUji() === 2 && adaData(t.uji[0]) && !adaData(t.uji[1])) {
     kabar.push("Pedoman mensyaratkan pengujian duplo: percobaan kedua berjarak 20 cm dari titik pertama.");
   }
@@ -3017,9 +3050,15 @@ function unduh(nama, data, tipe) {
   a.href = url; a.download = nama; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
-function namaBerkas(ext) {
+function namaBerkas(ext, ringkas) {
   var r = (S.proyek.ruas || S.proyek.nama || "DCP").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
-  return "DCP_" + (r || "Survey") + "_" + todayISO() + "." + ext;
+  var nama = "DCP_" + (r || "Survey") + "_" + todayISO();
+  /* berkas simpanan diberi jumlah titik dan jam, supaya cadangan dari waktu
+     berbeda tidak tertukar */
+  if (ringkas) {
+    nama += "_" + ringkas.titik + "titik-" + ringkas.terisi + "terisi_" + jamSekarang();
+  }
+  return nama + "." + ext;
 }
 function exportExcel() {
   try {
@@ -4531,12 +4570,7 @@ function pasang() {
       simpan(); isiUji(); isiLapisan();
     });
   });
-  ikat("u_awal", "change", function () {
-    var t = titikAktif(); if (!t) return;
-    var u = ujiAktif(t);
-    u.awal = num($("u_awal").value); if (u.auto) u.batas = null;
-    simpan(); isiUji();
-  });
+
   ikat("u_konus", "change", function () {
     var t = titikAktif(); if (!t) return;
     t.konus = num($("u_konus").value, 60); simpan(); isiUji(); isiLapisan();
@@ -4544,10 +4578,21 @@ function pasang() {
   function catat() {
     var t = titikAktif(); if (!t) return;
     var v = $("e_mm").value;
-    if (v === "") { toast("Isi bacaan mistar dulu."); $("e_mm").focus(); return; }
     var u = ujiAktif(t);
-    var mm = num(v), awal = num(u.awal);
-    if (mm < awal) { toast("Bacaan lebih kecil dari pembacaan awal."); }
+    if (v === "") {
+      toast(u.awalDiisi ? "Isi bacaan mistar dulu." : "Isi pembacaan awal mistar dulu.");
+      $("e_mm").focus(); return;
+    }
+    var mm = num(v);
+    if (!u.awalDiisi) {
+      /* catatan pertama pada satu percobaan adalah pembacaan awal mistar */
+      u.awal = mm; u.awalDiisi = true;
+      $("e_mm").value = "";
+      simpan(); isiUji(); $("e_mm").focus();
+      toast("Pembacaan awal " + mm + " mm. Selanjutnya bacaan tiap tumbukan.");
+      return;
+    }
+    if (mm < num(u.awal)) { toast("Bacaan lebih kecil dari pembacaan awal."); }
     u.bacaan.push({ t: num($("e_tumb").value, 1), mm: mm });
     if (u.auto) u.batas = null;
     $("e_mm").value = "";
@@ -4656,10 +4701,16 @@ function pasang() {
     try {
       var o = JSON.parse(await f.text());
       if (!o || !o.proyek || !Array.isArray(o.titik)) throw new Error("Isi berkas bukan data DCP Survey.");
+      var info = o._info || null;
       S = Object.assign(baseState(), o);
+      delete S._info;
+      S.titik.forEach(pastikanUji);
       sel = S.titik.length ? S.titik[0].id : null;
       simpan(); isiProyek(); isiTitik(); buka("proyek");
-      toast("Data dimuat: " + S.titik.length + " titik.");
+      var r = ringkasData();
+      var ket = "Dimuat: " + r.titik + " titik, " + r.terisi + " terisi, " + r.bacaan + " pembacaan";
+      if (info && info.ruas) ket += " \u00B7 " + info.ruas;
+      toast(ket + ".");
     } catch (err) { toast(err.message || "Berkas data gagal dibaca."); }
     e.target.value = "";
   });
@@ -4797,9 +4848,44 @@ function bukaPilihGaris() {
   bukaDlg("dlgGaris");
 }
 
+/** Ringkasan isi data, dipakai untuk menamai dan menandai berkas simpanan. */
+function ringkasData() {
+  var terisi = 0, bacaan = 0, foto = 0, uji = 0;
+  S.titik.forEach(function (t) {
+    pastikanUji(t);
+    var isi = ujiDipakai(t);
+    if (isi.length) terisi++;
+    uji += isi.length;
+    t.uji.slice(0, jmlUji()).forEach(function (u) { bacaan += (u.bacaan || []).length; });
+    foto += (t.foto || []).length;
+  });
+  return {
+    titik: S.titik.length, terisi: terisi, percobaan: uji,
+    bacaan: bacaan, foto: foto,
+    rekap: dataRekap("semua").length
+  };
+}
+function jamSekarang() {
+  var d = new Date(), p = function (n) { return (n < 10 ? "0" : "") + n; };
+  return p(d.getHours()) + p(d.getMinutes());
+}
 function simpanJson() {
-  unduh(namaBerkas("json"), JSON.stringify(S, null, 1), "application/json");
-  toast("File data disimpan.");
+  var r = ringkasData();
+  var isi = Object.assign({}, S, {
+    _info: {
+      aplikasi: "DCP Survey",
+      disimpan: new Date().toISOString(),
+      proyek: S.proyek.nama || "",
+      ruas: S.proyek.ruas || "",
+      jumlahTitik: r.titik,
+      titikTerisi: r.terisi,
+      jumlahPercobaan: r.percobaan,
+      jumlahPembacaan: r.bacaan,
+      jumlahFoto: r.foto
+    }
+  });
+  unduh(namaBerkas("json", r), JSON.stringify(isi, null, 1), "application/json");
+  toast("Tersimpan: " + r.titik + " titik, " + r.terisi + " terisi, " + r.bacaan + " pembacaan.");
 }
 
 /* ---- pendaftaran pelayan luring; hanya jalan bila dibuka lewat http(s) ---- */
