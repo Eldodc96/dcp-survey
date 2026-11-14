@@ -353,7 +353,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
 
   <div class="card">
     <h2>Trase dan STA</h2>
-    <div id="traseInfo" class="empty">Belum ada trase. STA diisi manual.</div>
+    <div id="traseInfo" class="empty">Belum ada trase. Peta tetap bisa dipakai: titik uji diambil dari GPS, STA diketik manual.</div>
     <svg class="chart" id="traseMap" viewBox="0 0 320 180" style="display:none;margin:8px 0"></svg>
     <div class="btnrow">
       <button class="btn quiet" id="btnTrase" type="button">Ambil KMZ / KML</button>
@@ -367,7 +367,9 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     </div>
     <div class="btnrow" style="margin-bottom:4px">
       <button class="btn quiet sm" id="btnGantiGaris" type="button" style="flex:1">Ganti garis trase</button>
+      <button class="btn quiet sm" id="btnBalikTrase" type="button" style="flex:1">Balik arah trase</button>
     </div>
+    <p class="note" style="margin:0 0 4px">Pakai bila titik di peta tergambar dari ujung yang salah. Ini hanya cara peta membaca trase; STA, sisi, dan jarak dari as hasil input tidak diubah.</p>
     <div class="row">
       <div class="field"><label for="f_sta0">STA awal (m)</label><input id="f_sta0" type="number" value="0" step="1"></div>
       <div class="field"><label for="f_staint">Jarak antar titik DCP (m)</label><input id="f_staint" type="number" value="50" step="1" min="1"></div>
@@ -415,7 +417,10 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     <h2>Titik uji <span class="hint" id="titikCount"></span></h2>
     <div id="titikList" class="plist"></div>
     <div class="btnrow" style="margin-top:12px">
-      <button class="btn" id="btnAddTitik" type="button">Tambah titik</button>
+      <button class="btn" id="btnTitikGps" type="button">Titik baru di posisi saya</button>
+    </div>
+    <div class="btnrow" style="margin-top:8px">
+      <button class="btn quiet" id="btnAddTitik" type="button">Tambah titik</button>
       <button class="btn quiet" id="btnNomorUlang" type="button" style="flex:0 0 40%">Nomori ulang</button>
     </div>
     <p class="note">Sentuh titik untuk mengisi pembacaan. Tombol ⋯ untuk mengubah kode, STA, dan posisi.</p>
@@ -436,6 +441,14 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
         </div>
         <input id="p_jarak" type="number" step="0.5" min="0" inputmode="decimal" aria-label="Jarak dari as jalan dalam meter">
         <span class="sat">m dari as</span>
+      </div>
+      <div class="field" style="margin:8px 0 0">
+        <label for="p_kel">Lapisan yang diuji</label>
+        <select id="p_kel">
+          <option value="subgrade">Tanah dasar (subgrade)</option>
+          <option value="cl">Perkerasan / pondasi lama</option>
+        </select>
+        <p class="note" style="margin:4px 0 0">Terisi sendiri dari posisi: kiri dan kanan tanah dasar, as jalan perkerasan. Ubah hanya bila kenyataan di lapangan berbeda.</p>
       </div>
       <div class="seg" id="segUji" style="margin-top:8px">
         <button type="button" data-uji="0" class="on">Percobaan 1</button>
@@ -529,11 +542,17 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
 <!-- ============ REKAP ============ -->
 <section class="panel" id="pane-rekap">
   <div class="card">
-    <h2>Rekap CBR lapangan <span class="hint" id="rekapCount"></span></h2>
+    <h2>Rekap CBR tanah dasar <span class="hint" id="rekapCount"></span></h2>
     <div class="tablewrap"><table id="rekapTabel"><thead><tr><th style="width:36px">No</th><th>STA</th><th>Kode</th><th>CBR (%)</th><th>Lapisan</th></tr></thead><tbody></tbody></table></div>
   </div>
+  <div class="card" id="kartuCL" style="display:none">
+    <h2>Titik di as jalan <span class="hint" id="clCount"></span></h2>
+    <p class="note" style="margin-top:0">Titik ini menguji perkerasan atau pondasi lama, bukan tanah dasar, sehingga dinilai terpisah dan tidak ikut menentukan CBR rencana tanah dasar.</p>
+    <div class="tablewrap"><table id="clTabel"><thead><tr><th style="width:36px">No</th><th>STA</th><th>Kode</th><th>CBR (%)</th></tr></thead><tbody></tbody></table></div>
+    <div id="clRingkas" style="margin-top:10px"></div>
+  </div>
   <div class="card">
-    <h2>CBR rencana</h2>
+    <h2>CBR rencana <span class="hint">— tanah dasar</span></h2>
     <div class="row">
       <div class="field"><label for="r_persentil">Persentil (%)</label><input id="r_persentil" type="number" value="90" step="1" min="50" max="100"></div>
       <div class="field"><label>Jumlah titik</label><input id="r_n" disabled></div>
@@ -610,6 +629,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
   <div class="petabar">
     <button type="button" id="petaTutup">Tutup</button>
     <div class="tengah"></div>
+    <button type="button" id="petaBalik" aria-label="Balik arah trase">Balik</button>
     <button type="button" id="petaGps" aria-label="Posisi saya">GPS</button>
     <button type="button" id="petaFitBtn" aria-label="Lihat semua">Semua</button>
     <button type="button" id="petaZoomOut" aria-label="Perkecil">&#8722;</button>
@@ -618,6 +638,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
   <div class="petainfogps" id="petaInfoGps"></div>
   <div class="petakaki" id="petaKaki">Citra: Esri, Maxar, Earthstar Geographics</div>
   <div class="petapilih" id="petaPilih">
+    <div id="wrapSisi">
     <label>Posisi melintang titik uji</label>
     <div class="seg" id="segSisi">
       <button type="button" data-sisi="0" class="on">Tengah (CL)</button>
@@ -627,6 +648,7 @@ details.lipat[open] summary::before{transform:rotate(90deg)}
     <div class="row" style="margin-top:8px">
       <div class="field" style="margin:0"><label for="pickJarak">Jarak dari as (m)</label>
         <input id="pickJarak" type="number" step="0.5" min="0" value="3" disabled></div>
+    </div>
     </div>
     <p class="note" id="pickInfo">Sentuh trase untuk menempatkan titik.</p>
     <div class="btnrow">
@@ -728,6 +750,7 @@ function baseState() {
     titik: [],
     persentil: 90,
     tandaiTrase: false,
+    traseBalik: false,   // arah pembacaan trase di peta; tidak mengubah data
     petaDasar: true,
     grafikTitik: true
   };
@@ -738,15 +761,31 @@ function todayISO() {
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
 }
 
-/** Nomor titik berikutnya: satu lebih besar dari nomor terbesar yang ada. */
+/** Ambil nomor dari kode titik, misalnya "T-07 Kiri" menjadi 7. */
+function nomorKode(kode) {
+  var m = /^T-0*(\d+)/.exec(String(kode || "").trim());
+  return m ? parseInt(m[1], 10) : 0;
+}
+function tulisKode(n, sisi, urut, berpasangan) {
+  var k = "T-" + (n < 10 ? "0" + n : n);
+  if (sisi === -1) k += " Kiri";
+  else if (sisi === 1) k += " Kanan";
+  else if (berpasangan) k += " CL";
+  if (urut > 1) k += " " + urut;
+  return k;
+}
+/**
+ * Nomor titik berikutnya. Penomoran mengikuti urutan STA dan dimulai dari
+ * nol, jadi titik pertama bernomor T-00; titik baru memakai nomor satu
+ * lebih besar dari yang terbesar, lalu dirapikan oleh nomoriUlang().
+ */
 function kodeBaru() {
-  var tertinggi = 0;
+  var tertinggi = -1;
   S.titik.forEach(function (t) {
-    var m = /^T-0*(\d+)$/.exec(String(t.kode || "").trim());
+    var m = /^T-0*(\d+)/.exec(String(t.kode || "").trim());
     if (m) tertinggi = Math.max(tertinggi, parseInt(m[1], 10));
   });
-  var n = tertinggi + 1;
-  return "T-" + (n < 10 ? "0" + n : n);
+  return tulisKode(tertinggi + 1, 0, 1);
 }
 function newTitik() {
   return {
@@ -803,12 +842,33 @@ function ujiDipakai(t) {
 function adaData(u) { return titikData(u).length >= 2; }
 function titikBerisi(t) { return ujiDipakai(t).length > 0; }
 
-/** Urutkan titik menurut STA lalu nomori ulang T-01, T-02, dan seterusnya. */
+/**
+ * Urutkan titik menurut STA lalu nomori ulang. Nomor mengikuti urutan STA
+ * dan dimulai dari nol, jadi STA pertama menjadi T-00. Titik pada STA yang
+ * sama memakai nomor yang sama, dibedakan oleh sisinya: T-07 Kiri dan
+ * T-07 Kanan. Titik di as jalan tanpa pasangan ditulis tanpa imbuhan.
+ */
 function nomoriUlang() {
-  S.titik.sort(function (a, b) { return num(a.sta, 0) - num(b.sta, 0); });
-  S.titik.forEach(function (t, i) {
-    var n = i + 1;
-    t.kode = "T-" + (n < 10 ? "0" + n : n);
+  var urutSisi = { "-1": 0, "0": 1, "1": 2 };
+  S.titik.sort(function (a, b) {
+    var d = num(a.sta, 0) - num(b.sta, 0);
+    if (d) return d;
+    return urutSisi[String(num(a.sisi, 0))] - urutSisi[String(num(b.sisi, 0))];
+  });
+  /* kelompokkan dulu menurut STA supaya tahu mana yang berpasangan */
+  var kelompok = [], terakhir = null;
+  S.titik.forEach(function (t) {
+    var sta = num(t.sta, 0);
+    if (!terakhir || sta !== terakhir.sta) { terakhir = { sta: sta, isi: [] }; kelompok.push(terakhir); }
+    terakhir.isi.push(t);
+  });
+  kelompok.forEach(function (g, i) {
+    var kenaSisi = {};
+    g.isi.forEach(function (t) {
+      var sisi = num(t.sisi, 0);
+      kenaSisi[sisi] = (kenaSisi[sisi] || 0) + 1;
+      t.kode = tulisKode(i, sisi, kenaSisi[sisi], g.isi.length > 1);
+    });
   });
 }
 
@@ -1048,12 +1108,31 @@ function cbrBulat(v) { return v === null ? null : Math.round(v * 2) / 2; }
 /* ======================================================================
    Rekap & CBR rencana
    ====================================================================== */
-function dataRekap() {
+/**
+ * Kelompok lapisan yang diuji. Titik di kiri dan kanan menguji tanah dasar,
+ * sedangkan titik di as jalan umumnya menembus perkerasan atau pondasi lama
+ * sehingga nilainya tidak boleh dicampur ke dalam populasi CBR tanah dasar.
+ */
+function kelTitik(t) {
+  if (t.kel === "cl" || t.kel === "subgrade") return t.kel;
+  return num(t.sisi, 0) === 0 ? "cl" : "subgrade";
+}
+function namaKel(k) {
+  return k === "cl" ? "Perkerasan / pondasi (as jalan)" : "Tanah dasar (subgrade)";
+}
+function namaKelPendek(k) { return k === "cl" ? "As jalan" : "Tanah dasar"; }
+
+/** Rekap CBR wakil. kel: "subgrade" (bawaan), "cl", atau "semua". */
+function dataRekap(kel) {
+  var pilih = kel || "subgrade";
   var d = [];
   S.titik.forEach(function (t) {
     var c = cbrWakil(t);
     if (c === null) return;
+    var k = kelTitik(t);
+    if (pilih !== "semua" && k !== pilih) return;
     d.push({
+      kel: k,
       id: t.id, kode: t.kode, sta: num(t.sta), cbr: cbrBulat(c), asli: c,
       nlap: hitungLapisan(t.uji[0], t.konus).lapis.length,
       nuji: ujiDipakai(t).length
@@ -1592,7 +1671,7 @@ function batasPeta() {
   if (S.trase) masuk(S.trase.ll);
   gb.fitur.forEach(function (f) { masuk(f.ll); });
   gb.overlay.forEach(function (o) { masuk([[o.barat, o.selatan], [o.timur, o.utara]]); });
-  S.titik.forEach(function (t) { if (t.lat !== null && t.lon !== null) masuk([[t.lon, t.lat]]); });
+  S.titik.forEach(function (t) { var q = letakTitik(t); if (q) masuk([[q.lon, q.lat]]); });
   if (!xs.length) return null;
   return {
     x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs),
@@ -1604,9 +1683,11 @@ function pandanganPenuh(W, H, pad) {
   var b = batasPeta(); if (!b) return null;
   pad = pad === undefined ? 16 : pad;
   var w = Math.max(b.x1 - b.x0, 1), h = Math.max(b.y1 - b.y0, 1);
+  /* batasi perbesaran: satu titik saja jangan membuat peta melompat
+     ke jarak beberapa sentimeter */
   return {
     cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2,
-    s: Math.min((W - 2 * pad) / w, (H - 2 * pad) / h)
+    s: Math.min(1.6, Math.min((W - 2 * pad) / w, (H - 2 * pad) / h))
   };
 }
 
@@ -1718,10 +1799,48 @@ function lukisPeta(el, W, H, v, opt) {
   if (S.tandaiTrase && S.trase) {
     g.push('<path d="' + jalur(S.trase.ll, false) + '" fill="none" stroke="' + navy +
       '" stroke-width="2.4" stroke-opacity=".8" stroke-dasharray="7 4" stroke-linecap="round"/>');
+    /* penanda arah: lingkaran di STA awal, anak panah mengikuti arah STA naik */
+    var ll0 = S.traseBalik ? S.trase.ll[S.trase.ll.length - 1] : S.trase.ll[0];
+    var ll1 = S.traseBalik ? S.trase.ll[0] : S.trase.ll[S.trase.ll.length - 1];
+    var aw = Q(ll0), ak = Q(ll1);
+    g.push('<circle cx="' + aw[0].toFixed(1) + '" cy="' + aw[1].toFixed(1) +
+      '" r="5.5" fill="#fff" stroke="' + navy + '" stroke-width="2.4"/>');
+    g.push('<text x="' + (aw[0] + 8).toFixed(1) + '" y="' + (aw[1] - 6).toFixed(1) +
+      '" font-size="10" fill="#fff" stroke="#000" stroke-width="2.6" stroke-opacity=".6" paint-order="stroke"' +
+      ' style="font-family:Arial,Helvetica,sans-serif">awal ' + staTeks(S.proyek.sta0) + "</text>");
+    g.push('<text x="' + (ak[0] + 8).toFixed(1) + '" y="' + (ak[1] - 6).toFixed(1) +
+      '" font-size="10" fill="#fff" stroke="#000" stroke-width="2.6" stroke-opacity=".6" paint-order="stroke"' +
+      ' style="font-family:Arial,Helvetica,sans-serif">akhir ' + staTeks(S.proyek.sta0 + S.trase.total) + "</text>");
+    var jarakPanah = S.trase.total / 8;
+    for (var ip = 1; ip < 8; ip++) {
+      var j1 = S.traseBalik ? S.trase.total - jarakPanah * ip : jarakPanah * ip;
+      var maju = S.trase.total / 200 * (S.traseBalik ? -1 : 1);
+      var a1 = geserDariAs(S.trase, j1, 0, 0);
+      var a2 = geserDariAs(S.trase, Math.max(0, Math.min(S.trase.total, j1 + maju)), 0, 0);
+      if (!a1 || !a2) continue;
+      var p1 = Q([a1.lon, a1.lat]), p2 = Q([a2.lon, a2.lat]);
+      var dxp = p2[0] - p1[0], dyp = p2[1] - p1[1];
+      var pj = Math.sqrt(dxp * dxp + dyp * dyp);
+      if (pj < 0.5) continue;
+      var ux = dxp / pj, uy = dyp / pj;
+      var hx = p1[0] + ux * 5, hy = p1[1] + uy * 5;      // ujung panah
+      var nx = -uy, ny = ux;                              // arah tegak lurus
+      var dPanah = "M" + (p1[0] - ux * 5).toFixed(1) + " " + (p1[1] - uy * 5).toFixed(1) +
+        "L" + hx.toFixed(1) + " " + hy.toFixed(1) +
+        "M" + (hx - ux * 5 + nx * 3.2).toFixed(1) + " " + (hy - uy * 5 + ny * 3.2).toFixed(1) +
+        "L" + hx.toFixed(1) + " " + hy.toFixed(1) +
+        "L" + (hx - ux * 5 - nx * 3.2).toFixed(1) + " " + (hy - uy * 5 - ny * 3.2).toFixed(1);
+      /* digambar dua lapis supaya tetap terbaca di atas garis berwarna apa pun */
+      g.push('<path d="' + dPanah + '" fill="none" stroke="#000000" stroke-opacity=".65" stroke-width="4.2"' +
+        ' stroke-linecap="round" stroke-linejoin="round"/>');
+      g.push('<path d="' + dPanah + '" fill="none" stroke="#ffffff" stroke-width="1.9"' +
+        ' stroke-linecap="round" stroke-linejoin="round"/>');
+    }
   }
   S.titik.forEach(function (t) {
-    if (t.lat === null || t.lon === null) return;
-    var q = Q([t.lon, t.lat]);
+    var letak = letakTitik(t);
+    if (!letak) return;
+    var q = Q([letak.lon, letak.lat]);
     var warna = (sel === t.id) ? or : navy;
     g.push('<circle cx="' + q[0].toFixed(1) + '" cy="' + q[1].toFixed(1) +
       '" r="4" fill="#fff" stroke="' + warna + '" stroke-width="2.2"/>');
@@ -1789,9 +1908,9 @@ function gambarTrase(elId) {
   var el = document.getElementById(elId);
   if (!el) return null;
   var gb = S.gambar || { fitur: [], overlay: [] };
-  if (!S.trase && !gb.fitur.length && !gb.overlay.length) {
+  if (!S.trase && !gb.fitur.length && !gb.overlay.length && !batasPeta()) {
     el.setAttribute("viewBox", "0 0 320 180");
-    el.innerHTML = teksKosong(320, 180, "Belum ada trase.");
+    el.innerHTML = teksKosong(320, 180, "Belum ada titik maupun trase.");
     return null;
   }
   var W = 320, H = 180, v = pandanganPenuh(W, H, 10);
@@ -2079,9 +2198,10 @@ function lembarDCP(t, u, no, nama) {
   L.t("J5", ":"); L.t("K5", P.lapisan || "Subgrade");
   L.t("A6", "PENGUJIAN PENETROMETER KONUS DINAMIS (DCP)", ST.tebal); L.gabung("A6:M7");
   L.t("A8", "Nilai Conus", ST.tebal); L.t("C8", ":"); L.n("D8", num(t.konus, 60), ST.tebal); L.t("E8", "°");
-  if (t.lat !== null && t.lon !== null) {
+  var koor = letakTitik(t);
+  if (koor) {
     L.t("G8", "Koordinat", ST.tebal); L.t("J8", ":");
-    L.t("K8", fmt(t.lat, 6) + " ; " + fmt(t.lon, 6));
+    L.t("K8", fmt(koor.lat, 6) + " ; " + fmt(koor.lon, 6));
   }
 
   L.t("A10", "Banyak Tumbukan", ST.kepala); L.gabung("A10:B11");
@@ -2155,7 +2275,7 @@ function lembarDCP(t, u, no, nama) {
   return L;
 }
 
-function lembarRekap(data, nama) {
+function lembarRekap(data, nama, kel) {
   var P = S.proyek, L = new Lembar(nama);
   var tab = tabelPersen(data.map(function (d) { return d.cbr; }));
   var n = data.length, last = 8 + n, d = tab.length, lastJ = 8 + d;
@@ -2164,7 +2284,8 @@ function lembarRekap(data, nama) {
     .lebar(14, 14, 19).lebar(15, 15, 11).lebar(16, 16, 2.5).lebar(17, 18, 10);
 
   L.t("A1", (P.nama || "PEKERJAAN").toUpperCase(), ST.judul); L.gabung("A1:L1");
-  L.t("A2", "RUAS: " + (P.ruas || "-").toUpperCase(), ST.tebal); L.gabung("A2:L2");
+  L.t("A2", "RUAS: " + (P.ruas || "-").toUpperCase() + "   |   " +
+    namaKel(kel || "subgrade").toUpperCase(), ST.tebal); L.gabung("A2:L2");
   L.t("A3", "Tim: " + (P.tim || "-") + "   |   Tanggal: " + (P.tanggal || "-") +
     "   |   Lapisan: " + (P.lapisan || "-")); L.gabung("A3:L3");
   L.t("A5", "DATA CBR LAPANGAN", ST.label); L.gabung("A5:C5");
@@ -2262,6 +2383,8 @@ function buatWorkbook() {
     });
   });
   lembar.push(lembarRekap(data, namaLembar("CBR Rekap", dipakai)));
+  var dataCL = dataRekap("cl");
+  if (dataCL.length) lembar.push(lembarRekap(dataCL, namaLembar("CBR Rekap CL", dipakai), "cl"));
 
   var berkas = [], ct = [], wbSheets = [], wbRels = [];
   var nGambar = 0, nGrafik = 0;
@@ -2442,10 +2565,17 @@ function isiTrase() {
   var gb = S.gambar || { fitur: [], overlay: [] };
   var jGaris = gb.fitur.filter(function (f) { return f.jenis === "garis"; }).length;
   $("btnTitikOtomatis").style.display = S.trase ? "" : "none";
+  $("btnBalikTrase").style.display = S.trase ? "" : "none";
+  $("btnBalikTrase").textContent = S.traseBalik ? "Arah: dibalik" : "Balik arah trase";
   $("btnGantiGaris").style.display = jGaris > 1 ? "" : "none";
+  var adaTitik = S.titik.some(function (t) { return letakTitik(t); });
   if (!S.trase && !gb.fitur.length) {
-    el.style.display = ""; peta.style.display = "none";
-    el.textContent = "Belum ada trase. STA diisi manual.";
+    el.style.display = "";
+    el.textContent = adaTitik
+      ? "Belum ada trase. Peta menampilkan titik hasil GPS."
+      : "Belum ada trase. Peta tetap bisa dipakai: titik uji diambil dari GPS, STA diketik manual.";
+    peta.style.display = adaTitik ? "" : "none";
+    if (adaTitik) gambarTrase("traseMap");
     return;
   }
   el.style.display = ""; peta.style.display = "";
@@ -2479,7 +2609,8 @@ function isiTitik() {
       var nu = ujiDipakai(t).length;
       return '<div class="pitem' + (t.id === sel ? " sel" : "") + '" data-id="' + t.id + '">' +
         '<div class="k">' + esc(t.kode) + '<div class="m">STA ' + staTeks(t.sta) + " · " + n +
-        " pembacaan" + (jmlUji() === 2 ? " \u00B7 " + nu + " dari 2 percobaan" : "") + "</div></div>" +
+        " pembacaan \u00B7 " + namaKelPendek(kelTitik(t)) +
+        (jmlUji() === 2 ? " \u00B7 " + nu + "/2 percobaan" : "") + "</div></div>" +
         '<div class="v"><b>' + (c === null ? "—" : fmt(c, 2)) + "</b><span>CBR %</span></div>" +
         '<button class="more" type="button" data-more="' + t.id + '">\u22EF</button></div>';
     }).join("");
@@ -2506,19 +2637,49 @@ function bukaDetailTitik() {
   $("t_lat").value = t.lat === null ? "" : t.lat;
   $("t_lon").value = t.lon === null ? "" : t.lon;
   $("t_catat").value = t.catatan || "";
-  $("t_posisi").textContent = (t.lat === null || t.lon === null)
+  var koorT = letakTitik(t);
+  $("t_posisi").textContent = !koorT
     ? "Posisi belum diisi. STA boleh langsung diketik."
-    : fmt(t.lat, 6) + " ; " + fmt(t.lon, 6) +
+    : fmt(koorT.lat, 6) + " ; " + fmt(koorT.lon, 6) +
       (t.offset === null || t.offset === undefined ? "" :
         " · " + fmt(t.offset, 1) + " m dari as jalan " + (t.sisi === 1 ? "(kanan)" : t.sisi === -1 ? "(kiri)" : ""));
   bukaDlg("dlgTitik");
 }
+/* ---------------------------------------------------------------------
+   Arah trase hanya setelan tampilan. STA, sisi, dan jarak dari as adalah
+   data hasil input dan tidak pernah diubah oleh peta.
+   --------------------------------------------------------------------- */
+function staKeJarak(sta) {
+  if (!S.trase) return 0;
+  var s = num(sta, 0) - num(S.proyek.sta0, 0);
+  if (S.traseBalik) s = S.trase.total - s;
+  return Math.max(0, Math.min(S.trase.total, s));
+}
+function jarakKeSta(s) {
+  if (!S.trase) return num(S.proyek.sta0, 0) + s;
+  return num(S.proyek.sta0, 0) + (S.traseBalik ? S.trase.total - s : s);
+}
+function sisiTampil(sisi) { return S.traseBalik ? -num(sisi, 0) : num(sisi, 0); }
+
+/** Letak titik di peta: diturunkan dari STA, sisi, dan jarak dari as. */
+function letakTitik(t) {
+  if (S.trase && t.sta !== null && t.sta !== undefined) {
+    var p = geserDariAs(S.trase, staKeJarak(t.sta), sisiTampil(t.sisi), num(t.offset, 0));
+    if (p) return p;
+  }
+  if (t.lat === null || t.lat === undefined || t.lon === null) return null;
+  return { lat: t.lat, lon: t.lon };
+}
+
 function hitungSta(t) {
   if (!S.trase || t.lat === null || t.lon === null) return;
   var pr = proyeksi(S.trase, t.lon, t.lat);
   if (!pr) return;
-  t.sta = Math.round(S.proyek.sta0 + pr.s);
-  t.offset = pr.jarak; t.sisi = pr.sisi;
+  t.sta = Math.round(jarakKeSta(pr.s));
+  /* titik yang praktis berimpit dengan as jalan tetap dianggap di CL,
+     supaya tidak muncul label Kiri/Kanan karena selisih beberapa sentimeter */
+  if (pr.jarak < 0.5) { t.offset = 0; t.sisi = 0; }
+  else { t.offset = pr.jarak; t.sisi = sisiTampil(pr.sisi); }
 }
 function proyeksiXY(tr, px, py) {
   var best = { d: Infinity, i: 0, tp: 0, s: 0 };
@@ -2557,6 +2718,7 @@ function isiUji() {
   $("p_jarak").value = sisi === 0 ? "" : fmt(num(t.offset, 0), 1).replace(",", ".");
   $("p_jarak").disabled = (sisi === 0);
   $("p_jarak").placeholder = sisi === 0 ? "\u2014" : "3";
+  $("p_kel").value = kelTitik(t);
   $("segUji").style.display = jmlUji() === 2 ? "" : "none";
   $("catatanDuplo").style.display = jmlUji() === 2 ? "" : "none";
   Array.prototype.forEach.call(document.querySelectorAll("#segUji button"), function (b) {
@@ -2649,11 +2811,13 @@ function letakTeks(t) {
 }
 /** Setel posisi melintang titik; koordinat ikut dihitung ulang dari trase. */
 function terapkanPosisi(t, sisi, jarak) {
+  /* berpindah sisi membuat lapisan yang diuji kembali mengikuti posisi;
+     penyetelan manual dilakukan sesudahnya bila memang perlu */
+  if (num(t.sisi, 0) !== sisi) delete t.kel;
   t.sisi = sisi;
   t.offset = sisi === 0 ? 0 : Math.abs(num(jarak, 0));
   if (S.trase) {
-    var s = Math.max(0, Math.min(S.trase.total, num(t.sta, 0) - num(S.proyek.sta0, 0)));
-    var p = geserDariAs(S.trase, s, t.sisi, t.offset);
+    var p = letakTitik(t);
     if (p) { t.lat = p.lat; t.lon = p.lon; }
   }
 }
@@ -2821,6 +2985,29 @@ function isiRekap() {
   gambarRekap(tab, r, p);
   gambarSebaran(data);
   $("x_grafik").checked = !!S.grafikTitik;
+  isiRekapCL();
+}
+
+/** Rekap tersendiri untuk titik di as jalan. */
+function isiRekapCL() {
+  var dcl = dataRekap("cl");
+  $("kartuCL").style.display = dcl.length ? "" : "none";
+  if (!dcl.length) return;
+  $("clCount").textContent = "\u2014 " + dcl.length + " titik";
+  document.querySelector("#clTabel tbody").innerHTML = dcl.map(function (d, i) {
+    return "<tr><td>" + (i + 1) + '</td><td class="num">' + staTeks(d.sta) + "</td><td>" + esc(d.kode) +
+      '</td><td class="num">' + fmt(d.cbr, 2) + "</td></tr>";
+  }).join("");
+  var nilai = dcl.map(function (d) { return d.cbr; });
+  var min = Math.min.apply(null, nilai), maks = Math.max.apply(null, nilai);
+  var rata = nilai.reduce(function (a, b) { return a + b; }, 0) / nilai.length;
+  var tabCL = tabelPersen(nilai);
+  var pCL = num($("r_persentil").value, 90);
+  $("clRingkas").innerHTML =
+    '<div class="kv"><span>CBR terkecil</span><b>' + fmt(min, 2) + " %</b></div>" +
+    '<div class="kv"><span>CBR terbesar</span><b>' + fmt(maks, 2) + " %</b></div>" +
+    '<div class="kv"><span>CBR rata-rata</span><b>' + fmt(rata, 2) + " %</b></div>" +
+    '<div class="kv"><span>Persentil ' + fmt(pCL, 0) + " %</span><b>" + fmt(cbrRencana(tabCL, pCL), 2) + " %</b></div>";
 }
 
 /* ------------------------------- berkas -------------------------------- */
@@ -3112,13 +3299,15 @@ function bytesKeUri(b, jenis) {
 
 /** Lembar lampiran peta lokasi seluruh titik pengujian. */
 function lembarPetaLokasi(svg) {
-  var data = dataRekap();
+  var data = dataRekap("semua");
   var baris = data.map(function (d, i) {
     var t = S.titik.filter(function (x) { return x.id === d.id; })[0] || {};
+    var q = letakTitik(t);
     return "<tr><td>" + (i + 1) + "</td><td>" + esc(d.kode) + "</td><td>" + staTeks(d.sta) + "</td>" +
-      "<td>" + (t.lat === null || t.lat === undefined ? "\u2014" : fmt(t.lat, 6)) + "</td>" +
-      "<td>" + (t.lon === null || t.lon === undefined ? "\u2014" : fmt(t.lon, 6)) + "</td>" +
+      "<td>" + (q ? fmt(q.lat, 6) : "\u2014") + "</td>" +
+      "<td>" + (q ? fmt(q.lon, 6) : "\u2014") + "</td>" +
       "<td>" + (t.offset ? fmt(t.offset, 1) + " m " + (t.sisi === 1 ? "kanan" : "kiri") : "as jalan") + "</td>" +
+      "<td>" + namaKelPendek(d.kel) + "</td>" +
       "<td>" + fmt(d.cbr, 2) + "</td></tr>";
   }).join("");
   return '<div class="lembar">' + kopHtml() +
@@ -3130,7 +3319,8 @@ function lembarPetaLokasi(svg) {
     "<tr><td>Tanggal</td><td>: " + esc(tglPanjang(S.proyek.tanggal)) + "</td></tr></table></div>" +
     (svg || '<p class="ket">Peta tidak dapat dibuat: belum ada trase atau gambar KMZ.</p>') +
     (data.length ? '<table class="data" style="margin-top:10px"><thead><tr>' +
-      "<th>No</th><th>Kode</th><th>STA</th><th>Lintang</th><th>Bujur</th><th>Posisi melintang</th><th>CBR (%)</th>" +
+      "<th>No</th><th>Kode</th><th>STA</th><th>Lintang</th><th>Bujur</th><th>Posisi melintang</th>" +
+      "<th>Lapisan diuji</th><th>CBR (%)</th>" +
       "</tr></thead><tbody>" + baris + "</tbody></table>" : "") +
     ttdHtml({ tanggal: S.proyek.tanggal }) + "</div>";
 }
@@ -3153,8 +3343,9 @@ function lembarDokumentasi(t) {
 }
 
 /** Lembar rekap CBR rencana satu ruas. */
-function lembarRekapCetak() {
-  var data = dataRekap();
+function lembarRekapCetak(kel) {
+  kel = kel || "subgrade";
+  var data = dataRekap(kel);
   if (!data.length) return "";
   var tab = tabelPersen(data.map(function (d) { return d.cbr; }));
   var p = num(S.persentil, 90), r = cbrRencana(tab, p);
@@ -3166,7 +3357,8 @@ function lembarRekapCetak() {
     return "<tr><td>" + fmt(x.cbr, 2) + "</td><td>" + x.jml + "</td><td>" + fmt(x.persen, 2) + "</td></tr>";
   }).join("");
   return '<div class="lembar">' + kopHtml() +
-    "<h1>REKAPITULASI CBR LAPANGAN DAN CBR RENCANA</h1>" +
+    "<h1>REKAPITULASI CBR LAPANGAN DAN CBR RENCANA<br>" +
+    namaKel(kel).toUpperCase() + "</h1>" +
     '<div class="info"><table>' +
     "<tr><td>Proyek</td><td>: " + esc(S.proyek.nama || "-") + "</td></tr>" +
     "<tr><td>Ruas</td><td>: " + esc(S.proyek.ruas || "-") + "</td></tr></table>" +
@@ -3199,7 +3391,8 @@ async function bukaLaporan() {
   var svg = null;
   try { svg = await petaLaporanSvg(620, 440); } catch (e) { svg = null; }
   html.push(lembarPetaLokasi(svg));
-  html.push(lembarRekapCetak());
+  html.push(lembarRekapCetak("subgrade"));
+  html.push(lembarRekapCetak("cl"));
   $("lapIsiCetak").innerHTML = html.join("");
   $("laporan").classList.add("on");
   document.body.style.overflow = "hidden";
@@ -3427,15 +3620,15 @@ function dDokumentasi(t, logo, foto) {
     ]);
   }
   return dKop(logo) + dJudul("LAMPIRAN DOKUMENTASI PENGUJIAN DCP") + dInfo(t) +
-    (t.lat !== null && t.lon !== null
-      ? dP("Koordinat: " + fmt(t.lat, 6) + " ; " + fmt(t.lon, 6) +
+    (letakTitik(t)
+      ? dP("Koordinat: " + fmt(letakTitik(t).lat, 6) + " ; " + fmt(letakTitik(t).lon, 6) +
         (t.offset === null || t.offset === undefined ? "" : "   |   " + fmt(t.offset, 1) + " m dari as jalan"), { sz: 17, sesudah: 120 })
       : "") +
     dTabel([LEBAR / 2, LEBAR / 2], isi, { tanpaGaris: !foto.length }) + dTtd(t);
 }
 function dPetaLokasi(logo, png) {
-  var data = dataRekap();
-  var kol = [600, 1200, 1300, 1700, 1700, 1700, 1438];
+  var data = dataRekap("semua");
+  var kol = [520, 1150, 1150, 1550, 1550, 1450, 1200, 1068];
   var baris = [[
     { t: "No", b: true, align: "center", fill: "DCE6F1" },
     { t: "Kode", b: true, align: "center", fill: "DCE6F1" },
@@ -3443,17 +3636,20 @@ function dPetaLokasi(logo, png) {
     { t: "Lintang", b: true, align: "center", fill: "DCE6F1" },
     { t: "Bujur", b: true, align: "center", fill: "DCE6F1" },
     { t: "Posisi melintang", b: true, align: "center", fill: "DCE6F1" },
+    { t: "Lapisan diuji", b: true, align: "center", fill: "DCE6F1" },
     { t: "CBR (%)", b: true, align: "center", fill: "DCE6F1" }
   ]];
   data.forEach(function (d, i) {
     var t = S.titik.filter(function (x) { return x.id === d.id; })[0] || {};
+    var q = letakTitik(t);
     baris.push([
       { t: String(i + 1), align: "center" },
       { t: d.kode, align: "center" },
       { t: staTeks(d.sta), align: "center" },
-      { t: (t.lat === null || t.lat === undefined) ? "\u2014" : fmt(t.lat, 6), align: "center" },
-      { t: (t.lon === null || t.lon === undefined) ? "\u2014" : fmt(t.lon, 6), align: "center" },
+      { t: q ? fmt(q.lat, 6) : "\u2014", align: "center" },
+      { t: q ? fmt(q.lon, 6) : "\u2014", align: "center" },
       { t: t.offset ? fmt(t.offset, 1) + " m " + (t.sisi === 1 ? "kanan" : "kiri") : "as jalan", align: "center" },
+      { t: namaKelPendek(d.kel), align: "center" },
       { t: fmt(d.cbr, 2), align: "center" }
     ]);
   });
@@ -3467,8 +3663,9 @@ function dPetaLokasi(logo, png) {
     (data.length ? dTabel(kol, baris) : "") + dTtd({ tanggal: S.proyek.tanggal });
 }
 
-function dRekap(logo) {
-  var data = dataRekap();
+function dRekap(logo, kel) {
+  kel = kel || "subgrade";
+  var data = dataRekap(kel);
   if (!data.length) return "";
   var tab = tabelPersen(data.map(function (d) { return d.cbr; }));
   var p = num(S.persentil, 90), r = cbrRencana(tab, p);
@@ -3485,7 +3682,8 @@ function dRekap(logo) {
   tab.forEach(function (x) {
     b2.push([{ t: fmt(x.cbr, 2), align: "center" }, { t: String(x.jml), align: "center" }, { t: fmt(x.persen, 2), align: "center" }]);
   });
-  return dKop(logo) + dJudul("REKAPITULASI CBR LAPANGAN DAN CBR RENCANA") +
+  return dKop(logo) + dJudul("REKAPITULASI CBR LAPANGAN DAN CBR RENCANA \u2014 " +
+    namaKel(kel).toUpperCase()) +
     dTabel([1500, 3319, 1500, 3319], [
       [{ t: "Proyek" }, { t: ": " + (S.proyek.nama || "-") }, { t: "Jumlah titik" }, { t: ": " + data.length }],
       [{ t: "Ruas" }, { t: ": " + (S.proyek.ruas || "-") }, { t: "Tanggal" }, { t: ": " + tglPanjang(S.proyek.tanggal) }]
@@ -3548,8 +3746,10 @@ async function buatDocx() {
     }
   } catch (e) { gPeta = null; }
   bagian.push(dPetaLokasi(logo, gPeta));
-  var rk = dRekap(logo);
+  var rk = dRekap(logo, "subgrade");
   if (rk) bagian.push(rk);
+  var rkCL = dRekap(logo, "cl");
+  if (rkCL) bagian.push(rkCL);
 
   var isi = bagian.join(dPindahHalaman());
   var dokumen = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -3632,7 +3832,15 @@ function lukisPetaPenuh() {
 function petaSemua() {
   ukuranPeta();
   var v = pandanganPenuh(PETA.W, PETA.H, 40);
-  if (v) { PETA.v = v; lukisPetaPenuh(); }
+  if (!v && GPS.pos) {
+    var m = merc(GPS.pos.lon, GPS.pos.lat);
+    v = { cx: m[0], cy: m[1], s: 1.6 };        // kira-kira seluas satu blok
+  }
+  if (!v) {
+    var m2 = merc(123.6, -10.17);               // tampilan awal sebelum ada data
+    v = { cx: m2[0], cy: m2[1], s: 0.02 };
+  }
+  PETA.v = v; lukisPetaPenuh();
 }
 function petaZoom(faktor, px, py) {
   if (!PETA.v) return;
@@ -3646,22 +3854,28 @@ function petaZoom(faktor, px, py) {
   lukisPetaPenuh();
 }
 function bukaPeta(mode) {
-  var gb = S.gambar || { fitur: [], overlay: [] };
-  if (!S.trase && !gb.fitur.length && !gb.overlay.length) {
-    toast("Impor berkas KMZ atau KML dulu.");
-    return;
-  }
-  if (mode === "pilih" && !S.trase) { toast("Belum ada garis trase untuk menentukan STA."); return; }
   PETA.mode = mode || "lihat";
   pickPos = null; pickSisi = 0;
   $("petaPilih").classList.toggle("on", PETA.mode === "pilih");
+  /* tanpa trase, posisi melintang tidak ada artinya */
+  $("wrapSisi").style.display = S.trase ? "" : "none";
+  $("petaBalik").style.display = S.trase ? "" : "none";
   $("peta").classList.add("on");
   document.body.style.overflow = "hidden";
   if (PETA.mode === "pilih") {
     aturSegSisi();
-    $("pickInfo").textContent = "Sentuh trase untuk menempatkan titik.";
+    $("pickInfo").textContent = S.trase
+      ? "Sentuh trase untuk menempatkan titik."
+      : "Sentuh peta untuk menaruh titik, atau tekan \u201cDari GPS\u201d.";
   }
   petaSemua();
+  /* tanpa trase, peta hidup dari GPS: nyalakan sendiri */
+  if (!S.trase && navigator.geolocation) {
+    if (mulaiGps()) {
+      $("petaGps").classList.add("aktif");
+      if (!batasPeta()) { GPS.ikut = true; $("petaInfoGps").textContent = "Mencari posisi\u2026"; }
+    }
+  }
 }
 function tutupPeta() {
   hentiGps();
@@ -3719,11 +3933,15 @@ function pasangPeta() {
     var titik = jari[ev.pointerId];
     delete jari[ev.pointerId];
     if (!Object.keys(jari).length) { geser = null; cubit = null; }
-    if (!bergerak && titik && PETA.mode === "pilih" && S.trase) {
+    if (!bergerak && titik && PETA.mode === "pilih") {
       var ll = mercBalik((titik[0] - PETA.W / 2) / PETA.v.s + PETA.v.cx,
         PETA.v.cy - (titik[1] - PETA.H / 2) / PETA.v.s);
-      var pr = proyeksi(S.trase, ll[0], ll[1]);
-      if (pr) taruhPick(pr.s);
+      if (S.trase) {
+        var pr = proyeksi(S.trase, ll[0], ll[1]);
+        if (pr) taruhPick(pr.s);
+      } else {
+        taruhPickBebas(ll[0], ll[1]);
+      }
     }
   }
   el.addEventListener("pointerup", lepas);
@@ -3979,8 +4197,8 @@ function tampilGps() {
   if (S.trase) {
     var pr = proyeksi(S.trase, GPS.pos.lon, GPS.pos.lat);
     if (pr) {
-      ket += " \u00B7 STA " + staTeks(S.proyek.sta0 + pr.s) +
-        " \u00B7 " + fmt(pr.jarak, 1) + " m " + (pr.sisi === 1 ? "kanan" : "kiri") + " as";
+      ket += " \u00B7 STA " + staTeks(jarakKeSta(pr.s)) +
+        " \u00B7 " + fmt(pr.jarak, 1) + " m " + (sisiTampil(pr.sisi) === 1 ? "kanan" : "kiri") + " as";
     }
   }
   el.textContent = ket;
@@ -4069,7 +4287,6 @@ function simpanProyek() {
   P.nama = $("f_nama").value; P.ruas = $("f_ruas").value; P.tim = $("f_tim").value;
   P.tanggal = $("f_tgl").value; P.lapisan = $("f_lapis").value;
   P.sta0 = num($("f_sta0").value, 0); P.staInt = num($("f_staint").value, 200);
-  S.titik.forEach(function (t) { hitungSta(t); });
   simpan(); kepala(); isiTrase();
 }
 
@@ -4136,6 +4353,8 @@ function pasang() {
     e.target.value = "";
   });
   ikat("btnGantiGaris", "click", bukaPilihGaris);
+  ikat("btnBalikTrase", "click", balikTampilan);
+  ikat("petaBalik", "click", balikTampilan);
   ikat("f_tandai", "change", function () {
     S.tandaiTrase = $("f_tandai").checked; simpan(); gambarTrase("traseMap");
   });
@@ -4148,7 +4367,9 @@ function pasang() {
   /* titik */
   ikat("btnNomorUlang", "click", function () {
     if (!S.titik.length) { toast("Belum ada titik."); return; }
-    if (!confirm("Urutkan titik menurut STA lalu nomori ulang menjadi T-01 dan seterusnya?")) return;
+    if (!confirm("Urutkan titik menurut STA lalu nomori ulang?\n\n" +
+      "Nomor mengikuti urutan STA mulai dari nol, jadi STA pertama menjadi T-00. " +
+      "Titik pada STA yang sama dijadikan sepasang: T-07 Kiri dan T-07 Kanan.")) return;
     nomoriUlang(); simpan(); isiTitik(); isiUji(); isiRekap();
     toast("Titik dinomori ulang.");
   });
@@ -4194,6 +4415,20 @@ function pasang() {
     tutupDlg("dlgTitik");
     bukaPeta("pilih");
   });
+  ikat("btnTitikGps", "click", function () {
+    if (!navigator.geolocation) { toast("Perangkat ini tidak menyediakan GPS."); return; }
+    var t = newTitik(); S.titik.push(t); sel = t.id; simpan(); isiTitik();
+    toast("Titik " + t.kode + " dibuat. Mengambil posisi\u2026");
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      var tt = titikAktif(); if (!tt) return;
+      tt.lat = pos.coords.latitude; tt.lon = pos.coords.longitude;
+      hitungSta(tt); simpan(); isiTitik(); isiUji();
+      toast("Posisi terisi (\u00B1" + fmt(pos.coords.accuracy, 0) + " m). Isi STA bila perlu.");
+    }, function () {
+      toast("GPS tidak bisa dipakai. Isi koordinat lewat tombol \u22EF pada titik.");
+    }, { enableHighAccuracy: true, timeout: 20000 });
+    buka("uji");
+  });
   Array.prototype.forEach.call(document.querySelectorAll("#segSisi button"), function (b) {
     b.addEventListener("click", function () {
       pickSisi = +b.dataset.sisi;
@@ -4205,12 +4440,14 @@ function pasang() {
   ikat("pickBatal", "click", function () { tutupPeta(); bukaDetailTitik(); });
   ikat("pickPakai", "click", function () {
     var t = titikAktif();
-    if (!pickPos) { toast("Sentuh trase dulu untuk menaruh titik."); return; }
+    if (!pickPos) { toast("Sentuh peta dulu untuk menaruh titik."); return; }
     if (t) {
       t.lat = pickPos.lat; t.lon = pickPos.lon;
-      t.sta = Math.round(S.proyek.sta0 + pickPos.s);
-      t.offset = pickPos.offset || 0;
-      t.sisi = pickPos.sisi || 0;
+      if (pickPos.s !== null && pickPos.s !== undefined) {
+        t.sta = Math.round(jarakKeSta(pickPos.s));
+        t.offset = pickPos.offset || 0;
+        t.sisi = pickPos.sisi || 0;
+      }
       simpan(); isiTitik();
     }
     tutupPeta(); bukaDetailTitik();
@@ -4244,13 +4481,18 @@ function pasang() {
   });
   ikat("pickGps", "click", function () {
     if (!GPS.pos) { if (mulaiGps()) toast("Menunggu posisi GPS\u2026"); return; }
+    if (!S.trase) {
+      taruhPickBebas(GPS.pos.lon, GPS.pos.lat);
+      toast("Posisi GPS dipakai (\u00B1" + fmt(GPS.pos.akurasi, 0) + " m).");
+      return;
+    }
     var pr = proyeksi(S.trase, GPS.pos.lon, GPS.pos.lat);
     if (!pr) { toast("Posisi tidak bisa diproyeksikan ke trase."); return; }
-    pickSisi = pr.sisi === 1 ? 1 : -1;
+    pickSisi = sisiTampil(pr.sisi) === 1 ? 1 : -1;
     $("pickJarak").value = fmt(pr.jarak, 1).replace(",", ".");
     aturSegSisi();
     taruhPick(pr.s);
-    toast("Posisi GPS dipakai: STA " + staTeks(S.proyek.sta0 + pr.s) + ".");
+    toast("Posisi GPS dipakai: STA " + staTeks(jarakKeSta(pr.s)) + ".");
   });
   ikat("f_dasar", "change", function () {
     S.petaDasar = $("f_dasar").checked;
@@ -4271,6 +4513,11 @@ function pasang() {
       simpan(); isiUji(); isiTitik();
       if (sisi !== 0 && !S.trase) toast("Posisi tercatat. Koordinatnya menyusul setelah trase dimuat.");
     });
+  });
+  ikat("p_kel", "change", function () {
+    var t = titikAktif(); if (!t) return;
+    t.kel = $("p_kel").value === "cl" ? "cl" : "subgrade";
+    simpan(); isiUji(); isiTitik(); isiRekap();
   });
   ikat("p_jarak", "change", function () {
     var t = titikAktif(); if (!t) return;
@@ -4430,22 +4677,44 @@ function aturSegSisi() {
   $("pickJarak").disabled = (pickSisi === 0);
 }
 /** Tempatkan titik pada STA tertentu, di as jalan atau bergeser ke kiri/kanan. */
+/** Taruh titik langsung pada koordinat, dipakai bila belum ada trase. */
+function taruhPickBebas(lon, lat) {
+  pickPos = { lon: lon, lat: lat, s: null, sisi: 0, offset: 0 };
+  lukisPetaPenuh();
+  $("pickInfo").textContent = fmt(lat, 6) + " ; " + fmt(lon, 6);
+}
 function taruhPick(s) {
   var jarak = pickSisi === 0 ? 0 : Math.abs(num($("pickJarak").value, 0));
   var as = geserDariAs(S.trase, s, 0, 0);
-  pickPos = geserDariAs(S.trase, s, pickSisi, jarak);
+  pickPos = geserDariAs(S.trase, s, sisiTampil(pickSisi), jarak);
+  if (pickPos) { pickPos.sisi = pickSisi; }
   if (!pickPos) return;
   pickPos.asLl = [as.lon, as.lat];
   lukisPetaPenuh();
-  $("pickInfo").textContent = "STA " + staTeks(S.proyek.sta0 + s) +
+  $("pickInfo").textContent = "STA " + staTeks(jarakKeSta(s)) +
     (pickSisi === 0 ? " \u00B7 di as jalan (CL)" :
       " \u00B7 " + fmt(jarak, 1) + " m " + (pickSisi === -1 ? "kiri" : "kanan") + " as jalan") +
     " \u00B7 " + fmt(pickPos.lat, 6) + " ; " + fmt(pickPos.lon, 6);
 }
+/**
+ * Balikkan arah trase. Titik uji tetap di tempatnya; STA-nya dihitung ulang
+ * dari ujung yang baru, sehingga titik yang tadinya di akhir menjadi awal.
+ */
+/** Balik arah trase. Hanya setelan tampilan; data titik tidak diubah. */
+function balikTampilan() {
+  if (!S.trase) { toast("Belum ada trase."); return; }
+  S.traseBalik = !S.traseBalik;
+  simpan(); isiTrase(); isiTitik();
+  if ($("peta").classList.contains("on")) lukisPetaPenuh();
+  toast(S.traseBalik
+    ? "Peta dibaca dari ujung seberang. Data tidak diubah."
+    : "Peta kembali ke arah asli trase.");
+}
+
 /** Jadikan satu kumpulan koordinat sebagai trase penentu STA. */
 function pakaiTrase(ll, nama) {
   S.trase = siapkanTrase(ll, nama);
-  S.titik.forEach(function (t) { hitungSta(t); });
+  /* STA hasil input tidak disentuh; letak titik di peta diturunkan dari STA */
   simpan(); isiTrase(); isiTitik();
 }
 /**
@@ -4473,7 +4742,7 @@ function buatTitikOtomatis() {
   for (var i = 0; i < n; i++) {
     var jrk = Math.min(i * jarak, S.trase.total);
     var t = newTitik();
-    t.sta = Math.round(S.proyek.sta0 + jrk);
+    t.sta = Math.round(jarakKeSta(jrk));
     var p = geserDariAs(S.trase, jrk, 0, 0);
     if (p) { t.lat = p.lat; t.lon = p.lon; t.offset = 0; t.sisi = 0; }
     S.titik.push(t);
